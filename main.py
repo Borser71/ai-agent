@@ -175,7 +175,7 @@ async def ask_question(request: QuestionRequest):
 
     try:
         response = client.chat.completions.create(
-            model="deepseek/deepseek-v4-flash",
+            model="google/gemini-2.5-flash-lite",
             messages=messages,
             max_tokens=800,
             temperature=0,
