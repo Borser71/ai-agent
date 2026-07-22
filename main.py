@@ -33,6 +33,55 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------- ЦЕНЫ И МАППИНГ ----------
+SITE_PRICES = {
+    'landing': 10000,
+    'info': 15000,
+    'vizitka': 20000,
+    'portfolio': 25000,
+    'shop': 30000,
+    'universal': 50000
+}
+
+SITE_ADDONS = {
+    'favicon': 0,
+    'form': 2000,
+    'map': 2000,
+    'offer': 3000,
+    'privacy': 3000,
+    'reviews': 3000,
+    'metrika': 3000,
+    'autopay': 5000,
+    'googlesheet': 5000,
+    'calendar': 5000
+}
+
+BOT_ADDONS = {
+    'googlesheet': 5000,
+    'calendar': 5000,
+    'autopay': 5000
+}
+
+# Маппинг для распознавания
+SITE_TYPE_MAP = {
+    '1': 'landing', '2': 'info', '3': 'vizitka', '4': 'portfolio', '5': 'shop', '6': 'universal',
+    'лендинг': 'landing', 'информационный': 'info', 'визитка': 'vizitka', 'портфолио': 'portfolio',
+    'интернет-магазин': 'shop', 'универсальный': 'universal', 'landing': 'landing', 'website': 'landing'
+}
+SITE_ADDON_MAP = {
+    '1': 'favicon', '2': 'form', '3': 'map', '4': 'offer', '5': 'privacy',
+    '6': 'reviews', '7': 'metrika', '8': 'autopay', '9': 'googlesheet', '10': 'calendar',
+    'favicon': 'favicon', 'форма': 'form', 'карта': 'map', 'оферта': 'offer', 'политика': 'privacy',
+    'отзывы': 'reviews', 'яндекс': 'metrika', 'автоплатеж': 'autopay', 'google таблица': 'googlesheet',
+    'календарь': 'calendar'
+}
+BOT_ADDON_MAP = {
+    '1': 'googlesheet', '2': 'calendar', '3': 'autopay',
+    'google таблица': 'googlesheet', 'календарь': 'calendar', 'автоплатеж': 'autopay'
+}
+
+# ---------- СИСТЕМНЫЙ ПРОМПТ ----------
 SYSTEM_PROMPT = """
 Ты — консультант компании Borisov Store (сайт borisov.store). Твоя задача — помочь клиенту выбрать сайт или Telegram-бота, уточнить дополнительные услуги, ознакомить с офертой и направить к оформлению заказа. Ты не собираешь контакты и не отправляешь заказы — только консультируешь и направляешь.
 
@@ -125,7 +174,8 @@ SYSTEM_PROMPT = """
 2. Уточни тип (из списка выше).
 3. Предложи дополнительные услуги.
 4. Когда клиент выбрал — назови примерную сумму (суммируй цены выбранных услуг). Скажи:
-   «Примерная стоимость вашего заказа: X ₽. Окончательная цена уточняется после согласования деталей.»
+   «Примерная стоимость вашего заказа: {{SUM}} ₽. Окончательная цена уточняется после согласования деталей.»
+   (Используй эту фразу дословно, заменяя {{SUM}} на сумму, которую я подставлю автоматически.)
 5. Спроси: «Вы согласны с этим выбором?»
 6. Если да — скажи:
    «Отлично! Перед оформлением заказа прошу вас ознакомиться с договором <a href='https://borisov.store/offer/' target='_blank'>публичной оферты</a>.
@@ -143,8 +193,9 @@ SYSTEM_PROMPT = """
 - Если вопрос не по теме — вежливо скажи, что ты консультант по услугам компании, и предложи вернуться к выбору.
 - Любой список из нескольких пунктов (типы сайтов, доп. услуги и т.п.) ВСЕГДА оформляй через тег <br> между пунктами — каждый пункт с новой строки, ВКЛЮЧАЯ первый пункт (то есть между вступительной фразой и пунктом №1 тоже обязательно ставь <br>, пункт 1 никогда не должен быть на одной строке со вступлением). Никогда не пиши список одной сплошной строкой через пробел.
 - За один ответ сообщай только ОДИН шаг сценария, не объединяй несколько разделов в одном сообщении. После каждого шага жди ответ клиента.
-
 """
+
+# ---------- МОДЕЛИ ДАННЫХ ----------
 class QuestionRequest(BaseModel):
     user_id: str
     text: str
@@ -152,6 +203,7 @@ class QuestionRequest(BaseModel):
 class AnswerResponse(BaseModel):
     reply: str
 
+# ---------- ХРАНИЛИЩЕ СЕССИЙ ----------
 sessions = {}
 MAX_HISTORY = 10
 
@@ -161,6 +213,85 @@ def get_or_create_history(user_id: str) -> list:
     sessions[user_id] = sessions[user_id][-MAX_HISTORY:]
     return sessions[user_id]
 
+# ---------- ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РАСЧЁТА ----------
+
+def get_session_data(user_id: str):
+    """Возвращает данные сессии для пользователя."""
+    if user_id not in sessions:
+        sessions[user_id] = {
+            'service_type': None,   # 'site' или 'bot'
+            'selected_site': None,  # ключ типа сайта из SITE_PRICES
+            'selected_addons': []   # список ключей доп. услуг
+        }
+    # Если сессия ещё не инициализирована как словарь, инициализируем
+    if not isinstance(sessions[user_id], dict):
+        sessions[user_id] = {
+            'service_type': None,
+            'selected_site': None,
+            'selected_addons': []
+        }
+    return sessions[user_id]
+
+def update_session(user_id: str, message: str):
+    """Парсит сообщение и обновляет сессию."""
+    data = get_session_data(user_id)
+    msg_lower = message.lower().strip()
+
+    # Если ещё не выбран тип услуги (сайт или бот)
+    if data['service_type'] is None:
+        # Проверяем на сайт
+        if any(word in msg_lower for word in ['сайт', 'веб-сайт', 'лендинг', 'визитка', 'портфолио', 'интернет-магазин', 'универсальный', 'landing', 'website']):
+            data['service_type'] = 'site'
+            # Попробуем сразу распознать конкретный тип
+            for key, val in SITE_TYPE_MAP.items():
+                if key in msg_lower:
+                    data['selected_site'] = val
+                    break
+        elif any(word in msg_lower for word in ['бот', 'телеграм', 'telegram', 'тг', 'tg', 'чат-бот', 'чатбот']):
+            data['service_type'] = 'bot'
+        return
+
+    # Если уже выбран сайт
+    if data['service_type'] == 'site':
+        # Если ещё не выбран конкретный тип сайта
+        if data['selected_site'] is None:
+            for key, val in SITE_TYPE_MAP.items():
+                if key in msg_lower:
+                    data['selected_site'] = val
+                    return
+            # Если не распознали, может быть, клиент написал "сайт" повторно - игнорируем
+            return
+
+        # Если тип сайта уже выбран, пытаемся распознать доп. услугу
+        for key, val in SITE_ADDON_MAP.items():
+            if key in msg_lower:
+                if val not in data['selected_addons']:
+                    data['selected_addons'].append(val)
+                return
+
+    # Если выбран бот
+    if data['service_type'] == 'bot':
+        for key, val in BOT_ADDON_MAP.items():
+            if key in msg_lower:
+                if val not in data['selected_addons']:
+                    data['selected_addons'].append(val)
+                return
+
+def calculate_total(user_id: str) -> int:
+    """Вычисляет итоговую сумму на основе данных сессии."""
+    data = get_session_data(user_id)
+    total = 0
+    if data['service_type'] == 'site' and data['selected_site']:
+        total += SITE_PRICES.get(data['selected_site'], 0)
+        for addon in data['selected_addons']:
+            total += SITE_ADDONS.get(addon, 0)
+    elif data['service_type'] == 'bot':
+        total += 15000  # базовая цена бота
+        for addon in data['selected_addons']:
+            total += BOT_ADDONS.get(addon, 0)
+    return total
+
+# ---------- ЭНДПОИНТЫ ----------
 @app.get("/health")
 async def health_check():
     return {"status": "AI agent is running"}
@@ -172,9 +303,17 @@ async def ask_question(request: QuestionRequest):
     if not user_message:
         raise HTTPException(status_code=400, detail="Текст сообщения не может быть пустым")
 
+    # 1. Обновляем историю (для модели)
     history = get_or_create_history(user_id)
     history.append({"role": "user", "content": user_message})
 
+    # 2. Обновляем сессию (выбор услуг)
+    update_session(user_id, user_message)
+
+    # 3. Вычисляем сумму
+    total = calculate_total(user_id)
+
+    # 4. Формируем сообщения для модели
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
 
     try:
@@ -188,6 +327,10 @@ async def ask_question(request: QuestionRequest):
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
+
+    # 5. Заменяем плейсхолдер {{SUM}} на реальную сумму (если сумма > 0)
+    if total > 0:
+        reply = reply.replace("{{SUM}}", str(total))
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
