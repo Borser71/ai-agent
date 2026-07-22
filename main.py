@@ -33,55 +33,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ---------- ЦЕНЫ И МАППИНГ ----------
-SITE_PRICES = {
-    'landing': 10000,
-    'info': 15000,
-    'vizitka': 20000,
-    'portfolio': 25000,
-    'shop': 30000,
-    'universal': 50000
-}
-
-SITE_ADDONS = {
-    'favicon': 0,
-    'form': 2000,
-    'map': 2000,
-    'offer': 3000,
-    'privacy': 3000,
-    'reviews': 3000,
-    'metrika': 3000,
-    'autopay': 5000,
-    'googlesheet': 5000,
-    'calendar': 5000
-}
-
-BOT_ADDONS = {
-    'googlesheet': 5000,
-    'calendar': 5000,
-    'autopay': 5000
-}
-
-# Маппинг для распознавания
-SITE_TYPE_MAP = {
-    '1': 'landing', '2': 'info', '3': 'vizitka', '4': 'portfolio', '5': 'shop', '6': 'universal',
-    'лендинг': 'landing', 'информационный': 'info', 'визитка': 'vizitka', 'портфолио': 'portfolio',
-    'интернет-магазин': 'shop', 'универсальный': 'universal', 'landing': 'landing', 'website': 'landing'
-}
-SITE_ADDON_MAP = {
-    '1': 'favicon', '2': 'form', '3': 'map', '4': 'offer', '5': 'privacy',
-    '6': 'reviews', '7': 'metrika', '8': 'autopay', '9': 'googlesheet', '10': 'calendar',
-    'favicon': 'favicon', 'форма': 'form', 'карта': 'map', 'оферта': 'offer', 'политика': 'privacy',
-    'отзывы': 'reviews', 'яндекс': 'metrika', 'автоплатеж': 'autopay', 'google таблица': 'googlesheet',
-    'календарь': 'calendar'
-}
-BOT_ADDON_MAP = {
-    '1': 'googlesheet', '2': 'calendar', '3': 'autopay',
-    'google таблица': 'googlesheet', 'календарь': 'calendar', 'автоплатеж': 'autopay'
-}
-
-# ---------- СИСТЕМНЫЙ ПРОМПТ ----------
 SYSTEM_PROMPT = """
 Ты — консультант компании Borisov Store (сайт borisov.store). Твоя задача — помочь клиенту выбрать сайт или Telegram-бота, уточнить дополнительные услуги, ознакомить с офертой и направить к оформлению заказа. Ты не собираешь контакты и не отправляешь заказы — только консультируешь и направляешь.
 
@@ -170,12 +121,11 @@ SYSTEM_PROMPT = """
 «Меня зовут Борисов Сергей. Я имею официальный статус «Самозанятый», который вы можете проверить по <a href='https://npd.nalog.ru/check-status/' target='_blank'>по ссылке</a>. Для проверки введите мой ИНН: 665200001260 и укажите дату.»
 
 8. Воронка продаж (основной сценарий)
-1. Поздоровайся, спроси: сайт или бот?
+1. Поздоровайся, скажи про комбинацию услуг, спроси: сайт или бот?
 2. Уточни тип (из списка выше).
 3. Предложи дополнительные услуги.
-4. Когда клиент выбрал — скажи дословно:
-   «Примерная стоимость вашего заказа: {{SUM}} ₽. Окончательная цена уточняется после согласования деталей.»
-   (Важно: используй именно эту фразу. Сумму я подставлю автоматически. НЕ суммируй цены самостоятельно!)
+4. Когда клиент выбрал — назови примерную сумму (суммируй цены выбранных услуг). Скажи:
+   «Примерная стоимость вашего заказа: X ₽. Окончательная цена уточняется после согласования деталей.»
 5. Спроси: «Вы согласны с этим выбором?»
 6. Если да — скажи:
    «Отлично! Перед оформлением заказа прошу вас ознакомиться с договором <a href='https://borisov.store/offer/' target='_blank'>публичной оферты</a>.
@@ -193,10 +143,8 @@ SYSTEM_PROMPT = """
 - Если вопрос не по теме — вежливо скажи, что ты консультант по услугам компании, и предложи вернуться к выбору.
 - Любой список из нескольких пунктов (типы сайтов, доп. услуги и т.п.) ВСЕГДА оформляй через тег <br> между пунктами — каждый пункт с новой строки, ВКЛЮЧАЯ первый пункт (то есть между вступительной фразой и пунктом №1 тоже обязательно ставь <br>, пункт 1 никогда не должен быть на одной строке со вступлением). Никогда не пиши список одной сплошной строкой через пробел.
 - За один ответ сообщай только ОДИН шаг сценария, не объединяй несколько разделов в одном сообщении. После каждого шага жди ответ клиента.
-- НИКОГДА не пытайся самостоятельно суммировать цены. Используй только готовую сумму, которую я подставлю в {{SUM}}.
-"""
 
-# ---------- МОДЕЛИ ДАННЫХ ----------
+"""
 class QuestionRequest(BaseModel):
     user_id: str
     text: str
@@ -204,84 +152,14 @@ class QuestionRequest(BaseModel):
 class AnswerResponse(BaseModel):
     reply: str
 
-# ---------- ХРАНИЛИЩЕ СЕССИЙ ----------
-sessions = {}  # {user_id: {'history': [...], 'data': {...}}}
+sessions = {}
 MAX_HISTORY = 10
 
 def get_or_create_history(user_id: str) -> list:
     if user_id not in sessions:
-        sessions[user_id] = {
-            'history': [],
-            'data': {
-                'service_type': None,
-                'selected_site': None,
-                'selected_addons': []
-            }
-        }
-    # Ограничиваем историю
-    if len(sessions[user_id]['history']) > MAX_HISTORY:
-        sessions[user_id]['history'] = sessions[user_id]['history'][-MAX_HISTORY:]
-    return sessions[user_id]['history']
-
-def get_session_data(user_id: str):
-    if user_id not in sessions:
-        sessions[user_id] = {
-            'history': [],
-            'data': {
-                'service_type': None,
-                'selected_site': None,
-                'selected_addons': []
-            }
-        }
-    return sessions[user_id]['data']
-
-def update_session(user_id: str, message: str):
-    data = get_session_data(user_id)
-    msg_lower = message.lower().strip()
-
-    if data['service_type'] is None:
-        if any(word in msg_lower for word in ['сайт', 'веб-сайт', 'лендинг', 'визитка', 'портфолио', 'интернет-магазин', 'универсальный', 'landing', 'website']):
-            data['service_type'] = 'site'
-            for key, val in SITE_TYPE_MAP.items():
-                if key in msg_lower:
-                    data['selected_site'] = val
-                    break
-        elif any(word in msg_lower for word in ['бот', 'телеграм', 'telegram', 'тг', 'tg', 'чат-бот', 'чатбот']):
-            data['service_type'] = 'bot'
-        return
-
-    if data['service_type'] == 'site':
-        if data['selected_site'] is None:
-            for key, val in SITE_TYPE_MAP.items():
-                if key in msg_lower:
-                    data['selected_site'] = val
-                    return
-            return
-        for key, val in SITE_ADDON_MAP.items():
-            if key in msg_lower:
-                if val not in data['selected_addons']:
-                    data['selected_addons'].append(val)
-                return
-
-    if data['service_type'] == 'bot':
-        for key, val in BOT_ADDON_MAP.items():
-            if key in msg_lower:
-                if val not in data['selected_addons']:
-                    data['selected_addons'].append(val)
-                return
-
-def calculate_total(user_id: str) -> int:
-    data = get_session_data(user_id)
-    total = 0
-    if data['service_type'] == 'site' and data['selected_site']:
-        total += SITE_PRICES.get(data['selected_site'], 0)
-        for addon in data['selected_addons']:
-            total += SITE_ADDONS.get(addon, 0)
-    elif data['service_type'] == 'bot':
-        total += 15000
-        for addon in data['selected_addons']:
-            total += BOT_ADDONS.get(addon, 0)
-    return total
+        sessions[user_id] = []
+    sessions[user_id] = sessions[user_id][-MAX_HISTORY:]
+    return sessions[user_id]
 
 @app.get("/health")
 async def health_check():
@@ -297,10 +175,6 @@ async def ask_question(request: QuestionRequest):
     history = get_or_create_history(user_id)
     history.append({"role": "user", "content": user_message})
 
-    update_session(user_id, user_message)
-
-    total = calculate_total(user_id)
-
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
 
     try:
@@ -314,9 +188,6 @@ async def ask_question(request: QuestionRequest):
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
-
-    if total > 0:
-        reply = reply.replace("{{SUM}}", str(total))
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
