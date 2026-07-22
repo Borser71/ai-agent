@@ -204,45 +204,43 @@ class AnswerResponse(BaseModel):
     reply: str
 
 # ---------- ХРАНИЛИЩЕ СЕССИЙ ----------
-sessions = {}
+sessions = {}  # {user_id: {'history': [...], 'data': {...}}}
 MAX_HISTORY = 10
 
 def get_or_create_history(user_id: str) -> list:
     if user_id not in sessions:
-        sessions[user_id] = []
-    sessions[user_id] = sessions[user_id][-MAX_HISTORY:]
-    return sessions[user_id]
-
-# ---------- ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РАСЧЁТА ----------
+        sessions[user_id] = {
+            'history': [],
+            'data': {
+                'service_type': None,
+                'selected_site': None,
+                'selected_addons': []
+            }
+        }
+    # Ограничиваем историю
+    if len(sessions[user_id]['history']) > MAX_HISTORY:
+        sessions[user_id]['history'] = sessions[user_id]['history'][-MAX_HISTORY:]
+    return sessions[user_id]['history']
 
 def get_session_data(user_id: str):
-    """Возвращает данные сессии для пользователя."""
     if user_id not in sessions:
         sessions[user_id] = {
-            'service_type': None,   # 'site' или 'bot'
-            'selected_site': None,  # ключ типа сайта из SITE_PRICES
-            'selected_addons': []   # список ключей доп. услуг
+            'history': [],
+            'data': {
+                'service_type': None,
+                'selected_site': None,
+                'selected_addons': []
+            }
         }
-    # Если сессия ещё не инициализирована как словарь, инициализируем
-    if not isinstance(sessions[user_id], dict):
-        sessions[user_id] = {
-            'service_type': None,
-            'selected_site': None,
-            'selected_addons': []
-        }
-    return sessions[user_id]
+    return sessions[user_id]['data']
 
 def update_session(user_id: str, message: str):
-    """Парсит сообщение и обновляет сессию."""
     data = get_session_data(user_id)
     msg_lower = message.lower().strip()
 
-    # Если ещё не выбран тип услуги (сайт или бот)
     if data['service_type'] is None:
-        # Проверяем на сайт
         if any(word in msg_lower for word in ['сайт', 'веб-сайт', 'лендинг', 'визитка', 'портфолио', 'интернет-магазин', 'универсальный', 'landing', 'website']):
             data['service_type'] = 'site'
-            # Попробуем сразу распознать конкретный тип
             for key, val in SITE_TYPE_MAP.items():
                 if key in msg_lower:
                     data['selected_site'] = val
@@ -251,25 +249,19 @@ def update_session(user_id: str, message: str):
             data['service_type'] = 'bot'
         return
 
-    # Если уже выбран сайт
     if data['service_type'] == 'site':
-        # Если ещё не выбран конкретный тип сайта
         if data['selected_site'] is None:
             for key, val in SITE_TYPE_MAP.items():
                 if key in msg_lower:
                     data['selected_site'] = val
                     return
-            # Если не распознали, может быть, клиент написал "сайт" повторно - игнорируем
             return
-
-        # Если тип сайта уже выбран, пытаемся распознать доп. услугу
         for key, val in SITE_ADDON_MAP.items():
             if key in msg_lower:
                 if val not in data['selected_addons']:
                     data['selected_addons'].append(val)
                 return
 
-    # Если выбран бот
     if data['service_type'] == 'bot':
         for key, val in BOT_ADDON_MAP.items():
             if key in msg_lower:
@@ -278,7 +270,6 @@ def update_session(user_id: str, message: str):
                 return
 
 def calculate_total(user_id: str) -> int:
-    """Вычисляет итоговую сумму на основе данных сессии."""
     data = get_session_data(user_id)
     total = 0
     if data['service_type'] == 'site' and data['selected_site']:
@@ -286,12 +277,11 @@ def calculate_total(user_id: str) -> int:
         for addon in data['selected_addons']:
             total += SITE_ADDONS.get(addon, 0)
     elif data['service_type'] == 'bot':
-        total += 15000  # базовая цена бота
+        total += 15000
         for addon in data['selected_addons']:
             total += BOT_ADDONS.get(addon, 0)
     return total
 
-# ---------- ЭНДПОИНТЫ ----------
 @app.get("/health")
 async def health_check():
     return {"status": "AI agent is running"}
@@ -303,17 +293,13 @@ async def ask_question(request: QuestionRequest):
     if not user_message:
         raise HTTPException(status_code=400, detail="Текст сообщения не может быть пустым")
 
-    # 1. Обновляем историю (для модели)
     history = get_or_create_history(user_id)
     history.append({"role": "user", "content": user_message})
 
-    # 2. Обновляем сессию (выбор услуг)
     update_session(user_id, user_message)
 
-    # 3. Вычисляем сумму
     total = calculate_total(user_id)
 
-    # 4. Формируем сообщения для модели
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
 
     try:
@@ -328,7 +314,6 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
 
-    # 5. Заменяем плейсхолдер {{SUM}} на реальную сумму (если сумма > 0)
     if total > 0:
         reply = reply.replace("{{SUM}}", str(total))
 
