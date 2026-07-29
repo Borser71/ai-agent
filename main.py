@@ -213,20 +213,26 @@ async def ask_question(request: QuestionRequest):
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
 
-    try:
+        try:
         response = client.chat.completions.create(
             model="google/gemini-2.5-flash-lite",
             messages=messages,
-            max_tokens=800,
+            max_tokens=1000,
             temperature=0,
         )
-        reply = response.choices[0].message.content
+        # Проверяем, что ответ содержит нужные поля
+        if response.choices and len(response.choices) > 0:
+            reply = response.choices[0].message.content
+            if reply is None:
+                reply = "Извините, модель не дала ответа. Попробуйте переформулировать вопрос."
+        else:
+            reply = "Извините, структура ответа от нейросети неожиданная. Попробуйте позже."
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
+        # Логируем полный ответ для отладки (если переменная response существует)
+        if 'response' in locals():
+            logger.error(f"Ответ OpenRouter: {response}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
-
-    history.append({"role": "assistant", "content": reply})
-    return AnswerResponse(reply=reply)
 
 if __name__ == "__main__":
     import uvicorn
