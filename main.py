@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +34,74 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------- ЦЕНЫ И МАППИНГ ----------
+SITE_TYPES = {
+    'len': 8000,
+    'info': 12000,
+    'vizit': 16000,
+    'portfolio': 20000,
+    'shop': 24000,
+    'universal': 40000
+}
+
+SITE_ADDONS = {
+    1: 0,      # favicon
+    2: 1600,   # форма обратной связи
+    3: 1600,   # карта проезда
+    4: 2400,   # еще 6 товаров
+    5: 2400,   # оферта
+    6: 2400,   # политика конфиденциальности
+    7: 2400,   # блок отзывов
+    8: 2400,   # Яндекс-Метрика
+    9: 2400,   # виджет звонка
+    10: 4000,  # еще 2 товара
+    11: 4000,  # автоплатеж
+    12: 4000,  # Google Таблица
+    13: 4000   # календарь
+}
+
+BOT_ADDONS = {
+    1: 4000,   # Google Таблица
+    2: 4000,   # календарь
+    3: 4000    # автоплатеж
+}
+
+# Маппинг для распознавания
+SITE_TYPE_MAP = {
+    'лендинг': 'len', 'landing': 'len',
+    'информационный': 'info',
+    'визитка': 'vizit',
+    'портфолио': 'portfolio',
+    'интернет-магазин': 'shop',
+    'универсальный': 'universal'
+}
+
+def count_digits(text: str) -> int:
+    return len(re.findall(r'\d', text))
+
+def parse_site_type(text: str) -> str | None:
+    text_lower = text.lower()
+    for key, val in SITE_TYPE_MAP.items():
+        if key in text_lower:
+            return val
+    return None
+
+def parse_addons(text: str, is_bot: bool = False) -> list:
+    """Извлекает номера дополнительных услуг из текста"""
+    numbers = re.findall(r'\b\d{1,2}\b', text)
+    result = []
+    for n in numbers:
+        num = int(n)
+        if is_bot:
+            if num in BOT_ADDONS:
+                result.append(num)
+        else:
+            if num in SITE_ADDONS:
+                result.append(num)
+    return list(set(result))  # убираем дубли
+
+# ---------- СИСТЕМНЫЙ ПРОМПТ (без расчёта суммы) ----------
 SYSTEM_PROMPT = """
 Ты — консультант компании Borisov Store (сайт borisov.store). Твоя задача — помочь клиенту выбрать сайт или Telegram-бота, уточнить дополнительные услуги, ознакомить с офертой и направить к оформлению заказа. Ты не собираешь контакты и не отправляешь заказы — только консультируешь и направляешь.
 
@@ -164,8 +233,9 @@ SYSTEM_PROMPT = """
 1. Поздоровайся, скажи про комбинацию услуг, спроси: сайт или бот?
 2. Уточни тип (из списка выше).
 3. Предложи дополнительные услуги.
-4. Когда клиент выбрал — назови общую сумму (суммируй цены выбранных услуг). Скажи:
-   «Стоимость вашего заказа: X ₽. Точную сумму вам выдаст — ЮKassa.» (Никогда не округляй суммы. Выдавай точную сумму, которую насчитал. Если клиент уточняет сумму, пересчитывай точно и без изменений.)
+4. Когда клиент выбрал — назови общую сумму. Скажи:
+   «Стоимость вашего заказа: {{SUM}} ₽. Точную сумму вам выдаст — ЮKassa.»
+   (НЕ пытайся считать сумму самостоятельно — я подставлю готовую цифру.)
 5. Спроси: «Вы согласны с этим выбором?»
 6. Если да — скажи:
    «Отлично! Перед оформлением заказа прошу вас ознакомиться с договором <a href='https://borisov.store/offer/' target='_blank'>публичной оферты</a>.
@@ -178,7 +248,6 @@ SYSTEM_PROMPT = """
 
 10. Правила
 - Не спрашивай контактные данные — это делает сайт.
-- Никогда не округляй суммы и не добавляй корректировки. Выдавай точную сумму, которую насчитал. Если клиент уточняет сумму, пересчитывай точно и без изменений.
 - Не отправляй заказы на почту.
 - Отвечай четко, по делу, дружелюбно.
 - Если вопрос не по теме — вежливо скажи, что ты консультант по услугам компании, и предложи вернуться к выбору.
@@ -187,8 +256,10 @@ SYSTEM_PROMPT = """
 - При любом вопросе о налогах, самозанятости, ИП, официальном статусе, чеке или платежах — немедленно отвечай только информацией из раздела 7 (Статус самозанятого). Никогда не отправляй клиента к специалисту и не давай общих советов.
 - Если клиент уже выбрал сайт или бота, продолжай диалог в рамках этого выбора. При ответах на любые вопросы (налоги, цены, технологии) не меняй ветку диалога и не спрашивай «сайт или бот?» повторно, если клиент не сказал, что хочет обсудить другой тип.
 - Если клиент говорит «понял», «ок», «да», «хорошо», «продолжим» и подобное — продолжай сценарий с текущего шага, не задавай вопрос «сайт или бот?» повторно, если выбор уже сделан.
-
+- Никогда не округляй суммы и не добавляй корректировки. Выдавай точную сумму, которую я подставлю.
 """
+
+# ---------- МОДЕЛИ ДАННЫХ ----------
 class QuestionRequest(BaseModel):
     user_id: str
     text: str
@@ -196,15 +267,50 @@ class QuestionRequest(BaseModel):
 class AnswerResponse(BaseModel):
     reply: str
 
-sessions = {}
+# ---------- СЕССИИ С РАСШИРЕННЫМИ ДАННЫМИ ----------
+sessions = {}  # user_id -> {'history': [...], 'data': {'type': None, 'site_type': None, 'addons': [], 'is_bot': False}}
 MAX_HISTORY = 10
 
-def get_or_create_history(user_id: str) -> list:
+def get_or_create_history(user_id: str):
     if user_id not in sessions:
-        sessions[user_id] = []
-    sessions[user_id] = sessions[user_id][-MAX_HISTORY:]
-    return sessions[user_id]
+        sessions[user_id] = {
+            'history': [],
+            'data': {
+                'service_type': None,   # 'site' or 'bot'
+                'site_type': None,      # 'len', 'info', etc.
+                'addons': [],           # list of integers
+                'is_bot': False
+            }
+        }
+    return sessions[user_id]['history']
 
+def get_session_data(user_id: str):
+    if user_id not in sessions:
+        sessions[user_id] = {
+            'history': [],
+            'data': {
+                'service_type': None,
+                'site_type': None,
+                'addons': [],
+                'is_bot': False
+            }
+        }
+    return sessions[user_id]['data']
+
+def calculate_total(data: dict) -> int:
+    total = 0
+    if data['service_type'] == 'site':
+        site_price = SITE_TYPES.get(data['site_type'], 0)
+        total += site_price
+        for addon in data['addons']:
+            total += SITE_ADDONS.get(addon, 0)
+    elif data['service_type'] == 'bot':
+        total += 12000  # базовая цена бота
+        for addon in data['addons']:
+            total += BOT_ADDONS.get(addon, 0)
+    return total
+
+# ---------- ЭНДПОИНТЫ ----------
 @app.get("/health")
 async def health_check():
     return {"status": "AI agent is running"}
@@ -216,9 +322,54 @@ async def ask_question(request: QuestionRequest):
     if not user_message:
         raise HTTPException(status_code=400, detail="Текст сообщения не может быть пустым")
 
+    # --- Обновляем историю ---
     history = get_or_create_history(user_id)
     history.append({"role": "user", "content": user_message})
 
+    # --- Обрабатываем выбор клиента ---
+    data = get_session_data(user_id)
+    msg_lower = user_message.lower()
+
+    # Если ещё не выбран тип услуги
+    if data['service_type'] is None:
+        if any(word in msg_lower for word in ['сайт', 'веб-сайт', 'лендинг', 'визитка', 'портфолио', 'интернет-магазин', 'универсальный']):
+            data['service_type'] = 'site'
+            # Попробуем сразу определить тип сайта
+            site_type = parse_site_type(user_message)
+            if site_type:
+                data['site_type'] = site_type
+        elif any(word in msg_lower for word in ['бот', 'телеграм', 'telegram', 'тг', 'чат-бот']):
+            data['service_type'] = 'bot'
+            data['is_bot'] = True
+
+    # Если выбран сайт, но ещё не выбран конкретный тип
+    if data['service_type'] == 'site' and data['site_type'] is None:
+        site_type = parse_site_type(user_message)
+        if site_type:
+            data['site_type'] = site_type
+
+    # Если выбран бот и сообщение содержит номера доп. услуг
+    if data['service_type'] == 'bot':
+        addons = parse_addons(user_message, is_bot=True)
+        for a in addons:
+            if a not in data['addons']:
+                data['addons'].append(a)
+
+    # Если выбран сайт и сообщение содержит номера доп. услуг
+    if data['service_type'] == 'site':
+        addons = parse_addons(user_message, is_bot=False)
+        for a in addons:
+            if a not in data['addons']:
+                data['addons'].append(a)
+
+    # --- Вычисляем сумму (если выбран тип и (для сайта - выбран конкретный тип) ) ---
+    total = 0
+    if data['service_type'] == 'site' and data['site_type'] is not None:
+        total = calculate_total(data)
+    elif data['service_type'] == 'bot':
+        total = calculate_total(data)
+
+    # --- Запрашиваем ответ нейросети ---
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
 
     try:
@@ -232,6 +383,10 @@ async def ask_question(request: QuestionRequest):
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
+
+    # --- Подставляем сумму вместо {{SUM}} ---
+    if total > 0:
+        reply = reply.replace("{{SUM}}", str(total))
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
