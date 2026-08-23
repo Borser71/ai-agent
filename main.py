@@ -36,7 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- ЦЕНЫ И МАППИНГ ----------
+# ---------- ЦЕНЫ ----------
 SITE_NAMES = {
     "len": "Лендинг",
     "info": "Информационный сайт",
@@ -54,24 +54,8 @@ SITE_PRICES = {
     "universal": 40000
 }
 SITE_ADDONS = {
-    1: 0,      # favicon
-    2: 1600,   # форма обратной связи
-    3: 1600,   # карта проезда
-    4: 2400,   # еще 6 товаров
-    5: 2400,   # оферта
-    6: 2400,   # политика конфиденциальности
-    7: 2400,   # блок отзывов
-    8: 2400,   # Яндекс-Метрика
-    9: 2400,   # виджет звонка
-    10: 4000,  # еще 2 товара
-    11: 4000,  # автоплатеж
-    12: 4000,  # Google Таблица
-    13: 4000   # календарь
-}
-BOT_ADDONS = {
-    1: 4000,   # Google Таблица
-    2: 4000,   # календарь
-    3: 4000    # автоплатеж
+    1: 0, 2: 1600, 3: 1600, 4: 2400, 5: 2400, 6: 2400,
+    7: 2400, 8: 2400, 9: 2400, 10: 4000, 11: 4000, 12: 4000, 13: 4000
 }
 ADDON_NAMES = {
     1: "favicon", 2: "Форма обратной связи", 3: "Карта проезда",
@@ -79,9 +63,10 @@ ADDON_NAMES = {
     7: "Блок отзывов", 8: "Яндекс-Метрика", 9: "Виджет звонка",
     10: "Еще 2 товара", 11: "Автоплатеж", 12: "Google Таблица", 13: "Календарь"
 }
+BOT_ADDONS = {1: 4000, 2: 4000, 3: 4000}
 BOT_ADDON_NAMES = {1: "Google Таблица", 2: "Календарь", 3: "Автоплатеж"}
 
-# ---------- СИСТЕМНЫЙ ПРОМПТ (с инструкцией JSON) ----------
+# ---------- СИСТЕМНЫЙ ПРОМПТ (без изменений) ----------
 SYSTEM_PROMPT = """
 Ты — консультант компании Borisov Store (сайт borisov.store). Твоя задача — помочь клиенту выбрать сайт или Telegram-бота, уточнить дополнительные услуги, ознакомить с офертой и направить к оформлению заказа. Ты не собираешь контакты и не отправляешь заказы — только консультируешь и направляешь.
 
@@ -257,8 +242,11 @@ class QuestionRequest(BaseModel):
 class AnswerResponse(BaseModel):
     reply: str
 
-# ---------- СЕССИИ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
-sessions = {}
+# ---------- СЕССИИ И СОСТОЯНИЯ ----------
+sessions = {}          # user_id -> список истории сообщений
+waiting_for_agreement = {}  # user_id -> True/False (ждём "да" или "нет")
+calculated_total = {}       # user_id -> float (рассчитанная сумма)
+
 MAX_HISTORY = 10
 
 def get_or_create_history(user_id: str) -> list:
@@ -268,11 +256,9 @@ def get_or_create_history(user_id: str) -> list:
     return sessions[user_id]
 
 def calculate_total(service: str, site_type: str = None, addons: list = None) -> tuple:
-    """Возвращает (сумма, текстовое описание заказа)"""
     total = 0.0
     services_text = ""
     if addons:
-        # Убираем дубликаты
         addons = list(set(addons))
     if service == "site" and site_type:
         total += SITE_PRICES.get(site_type, 0)
@@ -311,6 +297,37 @@ async def ask_question(request: QuestionRequest):
         raise HTTPException(status_code=400, detail="Текст сообщения не может быть пустым")
 
     history = get_or_create_history(user_id)
+
+    # --- Если мы ждём "да" или "нет" ---
+    if waiting_for_agreement.get(user_id):
+        if user_message.lower() in ["да", "согласен", "ок"]:
+            # Переходим к оферте
+            waiting_for_agreement[user_id] = False
+            reply = (
+                "Отлично! Перед оформлением заказа прошу вас ознакомиться с договором публичной оферты:\n"
+                "https://borisov.store/offer/\n\n"
+                "В ней прописаны все условия заказа, оплаты и наши обязательства.\n"
+                "Подтвердите, пожалуйста, что вы ознакомились с офертой (напишите «да»)."
+            )
+            history.append({"role": "assistant", "content": reply})
+            return AnswerResponse(reply=reply)
+        elif user_message.lower() in ["нет", "не согласен", "не"]:
+            # Клиент не согласен — пересчитываем сумму заново
+            waiting_for_agreement[user_id] = False
+            # Сбрасываем историю, чтобы клиент мог заново выбрать услуги
+            sessions[user_id] = []
+            reply = "Хорошо, давайте пересчитаем ваш заказ. Напишите, что вы хотите заказать (тип сайта или бота и номера дополнительных услуг)."
+            history.append({"role": "assistant", "content": reply})
+            return AnswerResponse(reply=reply)
+        else:
+            reply = "Пожалуйста, ответьте «да» или «нет»."
+            history.append({"role": "assistant", "content": reply})
+            return AnswerResponse(reply=reply)
+
+    # --- Если мы ждём подтверждение оферты ---
+    # (здесь можно добавить аналогичную логику, но пока оставим как есть)
+
+    # --- Обычный режим консультации ---
     history.append({"role": "user", "content": user_message})
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
@@ -326,8 +343,11 @@ async def ask_question(request: QuestionRequest):
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
+        history.append({"role": "assistant", "content": reply})
+        return AnswerResponse(reply=reply)
 
-    # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
+    # --- Пытаемся распарсить JSON и подставить сумму ---
+    parsed = False
     try:
         data = json.loads(reply)
         if isinstance(data, dict) and "service" in data:
@@ -336,15 +356,23 @@ async def ask_question(request: QuestionRequest):
             addons = data.get("addons", [])
             if service in ["site", "bot"]:
                 total, services_text = calculate_total(service, site_type, addons)
-                # Формируем ответ сами, игнорируя reply
+                calculated_total[user_id] = total
+                # Формируем ответ с суммой и переключаем состояние ожидания "да/нет"
                 reply = (
                     f"Стоимость вашего заказа: {total} ₽.\n"
                     f"Точную сумму вам выдаст — ЮKassa.\n\n"
-                    f"Вы согласны с этим выбором?"
+                    f"Вы согласны с этим выбором? (Ответьте «да» или «нет»)"
                 )
+                waiting_for_agreement[user_id] = True
+                parsed = True
     except json.JSONDecodeError:
-        # Не JSON — ничего не делаем, оставляем reply как есть
         pass
+
+    # Если JSON не распознан, оставляем reply как есть (нейросеть сама ответила)
+    if not parsed:
+        # Если в ответе нейросети есть фраза о согласии, можно переключить состояние
+        if "согласны" in reply.lower() or "согласен" in reply.lower():
+            waiting_for_agreement[user_id] = True
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
