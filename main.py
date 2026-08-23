@@ -81,7 +81,7 @@ ADDON_NAMES = {
 }
 BOT_ADDON_NAMES = {1: "Google Таблица", 2: "Календарь", 3: "Автоплатеж"}
 
-# ---------- СИСТЕМНЫЙ ПРОМПТ (с инструкцией JSON) ----------
+# ---------- СИСТЕМНЫЙ ПРОМПТ (усиленный, как в MAX-боте) ----------
 SYSTEM_PROMPT = """
 Ты — консультант компании Borisov Store (сайт borisov.store). Твоя задача — помочь клиенту выбрать сайт или Telegram-бота, уточнить дополнительные услуги, ознакомить с офертой и направить к оформлению заказа. Ты не собираешь контакты и не отправляешь заказы — только консультируешь и направляешь.
 
@@ -272,7 +272,6 @@ def calculate_total(service: str, site_type: str = None, addons: list = None) ->
     total = 0.0
     services_text = ""
     if addons:
-        # Убираем дубликаты
         addons = list(set(addons))
     if service == "site" and site_type:
         total += SITE_PRICES.get(site_type, 0)
@@ -327,7 +326,8 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
 
-    # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
+    # --- Пытаемся распарсить JSON ---
+    parsed = False
     try:
         data = json.loads(reply)
         if isinstance(data, dict) and "service" in data:
@@ -336,15 +336,53 @@ async def ask_question(request: QuestionRequest):
             addons = data.get("addons", [])
             if service in ["site", "bot"]:
                 total, services_text = calculate_total(service, site_type, addons)
-                # Формируем ответ сами, игнорируя reply
                 reply = (
                     f"Стоимость вашего заказа: {total} ₽.\n"
                     f"Точную сумму вам выдаст — ЮKassa.\n\n"
                     f"Вы согласны с этим выбором?"
                 )
+                parsed = True
     except json.JSONDecodeError:
-        # Не JSON — ничего не делаем, оставляем reply как есть
         pass
+
+    # --- Если JSON не распознан, пробуем повторно запросить нейросеть ---
+    if not parsed:
+        # Добавляем в историю системное сообщение, чтобы нейросеть вернула JSON
+        retry_messages = history + [{"role": "system", "content": "Ты должен вернуть ТОЛЬКО JSON с выбором клиента. Не пиши ничего кроме JSON."}]
+        try:
+            response2 = client.chat.completions.create(
+                model="google/gemini-2.5-flash-lite",
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + retry_messages,
+                max_tokens=200,
+                temperature=0,
+            )
+            reply2 = response2.choices[0].message.content
+            # Парсим повторный ответ
+            try:
+                data2 = json.loads(reply2)
+                if isinstance(data2, dict) and "service" in data2:
+                    service = data2.get("service")
+                    site_type = data2.get("site_type")
+                    addons = data2.get("addons", [])
+                    if service in ["site", "bot"]:
+                        total, services_text = calculate_total(service, site_type, addons)
+                        reply = (
+                            f"Стоимость вашего заказа: {total} ₽.\n"
+                            f"Точную сумму вам выдаст — ЮKassa.\n\n"
+                            f"Вы согласны с этим выбором?"
+                        )
+                        parsed = True
+            except json.JSONDecodeError:
+                pass
+        except Exception as e:
+            logger.error(f"Ошибка повторного запроса: {e}")
+
+        # Если всё равно не удалось, оставляем исходный reply (может быть неправильная сумма)
+        if not parsed:
+            # Можно также вывести сообщение о том, что не удалось распознать выбор
+            reply = "Извините, я не смог распознать ваш выбор. Пожалуйста, напишите тип услуги (сайт или бот) и номера дополнительных услуг через запятую."
+            history.append({"role": "assistant", "content": reply})
+            return AnswerResponse(reply=reply)
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
