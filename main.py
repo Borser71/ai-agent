@@ -271,6 +271,9 @@ def calculate_total(service: str, site_type: str = None, addons: list = None) ->
     """Возвращает (сумма, текстовое описание заказа)"""
     total = 0.0
     services_text = ""
+    if addons:
+        # Убираем дубликаты
+        addons = list(set(addons))
     if service == "site" and site_type:
         total += SITE_PRICES.get(site_type, 0)
         services_text = SITE_NAMES.get(site_type, "Сайт")
@@ -324,7 +327,7 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
 
-    # --- Пытаемся распарсить JSON и подставить сумму ---
+    # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
     try:
         data = json.loads(reply)
         if isinstance(data, dict) and "service" in data:
@@ -333,21 +336,14 @@ async def ask_question(request: QuestionRequest):
             addons = data.get("addons", [])
             if service in ["site", "bot"]:
                 total, services_text = calculate_total(service, site_type, addons)
-                # Заменяем "X" в шаблоне на сумму
-                reply = reply.replace('X', str(total))
-                # Можно также заменить "Стоимость вашего заказа: X ₽" на готовую фразу
-                # Но оставим как есть, замена X на число — самый простой способ.
-                # Если в ответе нет X, можно добавить сумму в конец.
-                # Сделаем дополнительно: если в reply нет слова "Стоимость", добавим её.
-                # Но пока просто заменяем X.
-                # Если сумма была посчитана, можно также заменить фразу о ЮKassa,
-                # но оставим как есть.
-                # Для красоты можно сформировать отдельный ответ:
-                # reply = f"Стоимость вашего заказа: {total} ₽.\nТочную сумму вам выдаст — ЮKassa.\n\nВы согласны с этим выбором?"
-                # Но чтобы не ломать сценарий, оставим как есть.
-                pass
+                # Формируем ответ сами, игнорируя reply
+                reply = (
+                    f"Стоимость вашего заказа: {total} ₽.\n"
+                    f"Точную сумму вам выдаст — ЮKassa.\n\n"
+                    f"Вы согласны с этим выбором?"
+                )
     except json.JSONDecodeError:
-        # Не JSON — ничего не делаем
+        # Не JSON — ничего не делаем, оставляем reply как есть
         pass
 
     history.append({"role": "assistant", "content": reply})
