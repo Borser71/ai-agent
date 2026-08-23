@@ -1,7 +1,5 @@
 import os
 import logging
-import json
-import re
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,53 +33,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ---------- ЦЕНЫ И МАППИНГ ----------
-SITE_NAMES = {
-    "len": "Лендинг",
-    "info": "Информационный сайт",
-    "vizit": "Визитка",
-    "portfolio": "Портфолио",
-    "shop": "Интернет-магазин",
-    "universal": "Универсальный сайт"
-}
-SITE_PRICES = {
-    "len": 8000,
-    "info": 12000,
-    "vizit": 16000,
-    "portfolio": 20000,
-    "shop": 24000,
-    "universal": 40000
-}
-SITE_ADDONS = {
-    1: 0,      # favicon
-    2: 1600,   # форма обратной связи
-    3: 1600,   # карта проезда
-    4: 2400,   # еще 6 товаров
-    5: 2400,   # оферта
-    6: 2400,   # политика конфиденциальности
-    7: 2400,   # блок отзывов
-    8: 2400,   # Яндекс-Метрика
-    9: 2400,   # виджет звонка
-    10: 4000,  # еще 2 товара
-    11: 4000,  # автоплатеж
-    12: 4000,  # Google Таблица
-    13: 4000   # календарь
-}
-BOT_ADDONS = {
-    1: 4000,   # Google Таблица
-    2: 4000,   # календарь
-    3: 4000    # автоплатеж
-}
-ADDON_NAMES = {
-    1: "favicon", 2: "Форма обратной связи", 3: "Карта проезда",
-    4: "Еще 6 товаров", 5: "Оферта", 6: "Политика конфиденциальности",
-    7: "Блок отзывов", 8: "Яндекс-Метрика", 9: "Виджет звонка",
-    10: "Еще 2 товара", 11: "Автоплатеж", 12: "Google Таблица", 13: "Календарь"
-}
-BOT_ADDON_NAMES = {1: "Google Таблица", 2: "Календарь", 3: "Автоплатеж"}
-
-# ---------- СИСТЕМНЫЙ ПРОМПТ (усиленный, как в MAX-боте) ----------
 SYSTEM_PROMPT = """
 Ты — консультант компании Borisov Store (сайт borisov.store). Твоя задача — помочь клиенту выбрать сайт или Telegram-бота, уточнить дополнительные услуги, ознакомить с офертой и направить к оформлению заказа. Ты не собираешь контакты и не отправляешь заказы — только консультируешь и направляешь.
 
@@ -213,9 +164,8 @@ SYSTEM_PROMPT = """
 1. Поздоровайся, скажи про комбинацию услуг, спроси: сайт или бот?
 2. Уточни тип (из списка выше).
 3. Предложи дополнительные услуги.
-4. Когда клиент выбрал — назови общую сумму. Скажи:
+4. Когда клиент выбрал — назови общую сумму (суммируй цены выбранных услуг). Скажи:
    «Стоимость вашего заказа: X ₽. Точную сумму вам выдаст — ЮKassa.»
-   (Не используй слово «примерная», только точную сумму.)
 5. Спроси: «Вы согласны с этим выбором?»
 6. Если да — скажи:
    «Отлично! Перед оформлением заказа прошу вас ознакомиться с договором <a href='https://borisov.store/offer/' target='_blank'>публичной оферты</a>.
@@ -237,19 +187,7 @@ SYSTEM_PROMPT = """
 - Если клиент уже выбрал сайт или бота, продолжай диалог в рамках этого выбора. При ответах на любые вопросы (налоги, цены, технологии) не меняй ветку диалога и не спрашивай «сайт или бот?» повторно, если клиент не сказал, что хочет обсудить другой тип.
 - Если клиент говорит «понял», «ок», «да», «хорошо», «продолжим» и подобное — продолжай сценарий с текущего шага, не задавай вопрос «сайт или бот?» повторно, если выбор уже сделан.
 - Никогда не округляй суммы и не добавляй корректировки. Выдавай точную сумму, которую насчитал. Если клиент уточняет сумму, пересчитывай точно и без изменений.
-
-Если клиент явно выбрал услугу (назвал тип сайта, бота или номера доп. услуг), ты должен вернуть ТОЛЬКО JSON в формате:
-{"service": "site", "site_type": "vizit", "addons": [3, 7, 12]}
-
-Возможные значения:
-- service: "site" или "bot"
-- site_type: "len" (лендинг), "info" (информационный), "vizit" (визитка), "portfolio" (портфолио), "shop" (интернет-магазин), "universal" (универсальный) — только если service = "site"
-- addons: массив номеров дополнительных услуг (например, [3, 7, 12]) — если их нет, то []
-
-Если клиент задаёт вопрос, не связанный с выбором, или ты не уверен в выборе, верни обычный текст (не JSON).
 """
-
-# ---------- МОДЕЛИ ДАННЫХ ----------
 class QuestionRequest(BaseModel):
     user_id: str
     text: str
@@ -257,7 +195,6 @@ class QuestionRequest(BaseModel):
 class AnswerResponse(BaseModel):
     reply: str
 
-# ---------- СЕССИИ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 sessions = {}
 MAX_HISTORY = 10
 
@@ -267,37 +204,6 @@ def get_or_create_history(user_id: str) -> list:
     sessions[user_id] = sessions[user_id][-MAX_HISTORY:]
     return sessions[user_id]
 
-def calculate_total(service: str, site_type: str = None, addons: list = None) -> tuple:
-    """Возвращает (сумма, текстовое описание заказа)"""
-    total = 0.0
-    services_text = ""
-    if addons:
-        addons = list(set(addons))
-    if service == "site" and site_type:
-        total += SITE_PRICES.get(site_type, 0)
-        services_text = SITE_NAMES.get(site_type, "Сайт")
-        if addons:
-            addon_list = []
-            for a in addons:
-                if a in SITE_ADDONS:
-                    total += SITE_ADDONS[a]
-                    addon_list.append(ADDON_NAMES.get(a, str(a)))
-            if addon_list:
-                services_text += " + " + ", ".join(addon_list)
-    elif service == "bot":
-        total += 12000
-        services_text = "Telegram-бот"
-        if addons:
-            addon_list = []
-            for a in addons:
-                if a in BOT_ADDONS:
-                    total += BOT_ADDONS[a]
-                    addon_list.append(BOT_ADDON_NAMES.get(a, str(a)))
-            if addon_list:
-                services_text += " + " + ", ".join(addon_list)
-    return int(total), services_text
-
-# ---------- ЭНДПОИНТЫ ----------
 @app.get("/health")
 async def health_check():
     return {"status": "AI agent is running"}
@@ -325,64 +231,6 @@ async def ask_question(request: QuestionRequest):
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
-
-    # --- Пытаемся распарсить JSON ---
-    parsed = False
-    try:
-        data = json.loads(reply)
-        if isinstance(data, dict) and "service" in data:
-            service = data.get("service")
-            site_type = data.get("site_type")
-            addons = data.get("addons", [])
-            if service in ["site", "bot"]:
-                total, services_text = calculate_total(service, site_type, addons)
-                reply = (
-                    f"Стоимость вашего заказа: {total} ₽.\n"
-                    f"Точную сумму вам выдаст — ЮKassa.\n\n"
-                    f"Вы согласны с этим выбором?"
-                )
-                parsed = True
-    except json.JSONDecodeError:
-        pass
-
-    # --- Если JSON не распознан, пробуем повторно запросить нейросеть ---
-    if not parsed:
-        # Добавляем в историю системное сообщение, чтобы нейросеть вернула JSON
-        retry_messages = history + [{"role": "system", "content": "Ты должен вернуть ТОЛЬКО JSON с выбором клиента. Не пиши ничего кроме JSON."}]
-        try:
-            response2 = client.chat.completions.create(
-                model="google/gemini-2.5-flash-lite",
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + retry_messages,
-                max_tokens=200,
-                temperature=0,
-            )
-            reply2 = response2.choices[0].message.content
-            # Парсим повторный ответ
-            try:
-                data2 = json.loads(reply2)
-                if isinstance(data2, dict) and "service" in data2:
-                    service = data2.get("service")
-                    site_type = data2.get("site_type")
-                    addons = data2.get("addons", [])
-                    if service in ["site", "bot"]:
-                        total, services_text = calculate_total(service, site_type, addons)
-                        reply = (
-                            f"Стоимость вашего заказа: {total} ₽.\n"
-                            f"Точную сумму вам выдаст — ЮKassa.\n\n"
-                            f"Вы согласны с этим выбором?"
-                        )
-                        parsed = True
-            except json.JSONDecodeError:
-                pass
-        except Exception as e:
-            logger.error(f"Ошибка повторного запроса: {e}")
-
-        # Если всё равно не удалось, оставляем исходный reply (может быть неправильная сумма)
-        if not parsed:
-            # Можно также вывести сообщение о том, что не удалось распознать выбор
-            reply = "Извините, я не смог распознать ваш выбор. Пожалуйста, напишите тип услуги (сайт или бот) и номера дополнительных услуг через запятую."
-            history.append({"role": "assistant", "content": reply})
-            return AnswerResponse(reply=reply)
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
