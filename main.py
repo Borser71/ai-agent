@@ -328,24 +328,26 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
 
-    # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
-    try:
-        data = json.loads(reply)
-        if isinstance(data, dict) and "service" in data:
-            service = data.get("service")
-            site_type = data.get("site_type")
-            addons = data.get("addons", [])
-            if service in ["site", "bot"]:
-                total, services_text = calculate_total(service, site_type, addons)
-                # Формируем ответ сами, игнорируя reply
-                reply = (
-                    f"Стоимость вашего заказа: {total} ₽.\n"
-                    f"Точную сумму вам выдаст — ЮKassa.\n\n"
-                    f"Вы согласны с этим выбором?"
-                )
-    except json.JSONDecodeError:
-        # Не JSON — ничего не делаем, оставляем reply как есть
-        pass
+    # --- Извлекаем JSON из ответа нейросети (вариант 2: улучшенный парсинг) ---
+    json_match = re.search(r'\{.*\}', reply, re.DOTALL)
+    if json_match:
+        try:
+            data = json.loads(json_match.group())
+            if isinstance(data, dict) and "service" in data:
+                service = data.get("service")
+                site_type = data.get("site_type")
+                addons = data.get("addons", [])
+                if service in ["site", "bot"]:
+                    total, services_text = calculate_total(service, site_type, addons)
+                    # Формируем ответ сами, игнорируя исходный reply
+                    reply = (
+                        f"Стоимость вашего заказа: {total} ₽.\n"
+                        f"Точную сумму вам выдаст — ЮKassa.\n\n"
+                        f"Вы согласны с этим выбором?"
+                    )
+        except json.JSONDecodeError:
+            # Если не удалось распарсить JSON, оставляем исходный reply
+            pass
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
