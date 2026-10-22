@@ -340,7 +340,7 @@ async def ask_question(request: QuestionRequest):
         reply = response.choices[0].message.content
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
-        reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
+        reply = "Секунду, уточняю информацию. Пожалуйста, отправьте сообщение ещё раз."
 
     # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
     try:
