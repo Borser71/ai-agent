@@ -77,12 +77,8 @@ ADDON_NAMES = {
     10: "Еще 2 товара", 11: "Автоплатеж", 12: "Google Таблица", 13: "Календарь",
     14: "Автоматическая оплата криптовалютой"
 }
+
 # Три пакета Telegram-ботов (без доп. услуг)
-BOT_PACKAGES = {
-    "contact": {"name": "Бот для сбора контактов", "price": 6400},
-    "contact_consult": {"name": "Сбор контактов и бот-консультант", "price": 9600},
-    "full": {"name": "Бот: сбор контактов, консультант, оплата", "price": 16000}
-}
 BOT_PACKAGE_NAMES = {
     "contact": "Бот для сбора контактов (без ИИ)",
     "contact_consult": "Сбор контактов и бот-консультант (с ИИ)",
@@ -196,7 +192,7 @@ SYSTEM_PROMPT = """
 <br>- openai — клиент для работы с нейросетями через OpenRouter.
 <br>- python-dotenv — чтение переменных окружения из .env (токены, ключи).
 <br>- Telegram Bot API — отправка и приём сообщений.
-<br>- OpenRouter API — шлюз для подключения к разным нейросетям. Основная модель: Google Gemini 2.5 Flash Lite.
+<br>- OpenRouter API — шлюз для подключения к разным нейросетям. Основная модель: GPT-4o-mini.
 <br>- Render (США) — облачная платформа, бот работает 24/7.
 <br>- GitHub — хранение кода, автоматический деплой на Render при обновлениях.
 <br>- KNOWLEDGE — текстовый блок внутри кода с информацией о сервисе, услугах, ценах и контактах. Нейросеть использует его как «память».
@@ -256,10 +252,14 @@ SYSTEM_PROMPT = """
 Если клиент явно выбрал услугу (назвал тип сайта, бота или номера доп. услуг), ты должен вернуть ТОЛЬКО JSON в формате:
 {"service": "site", "site_type": "vizit", "addons": [3, 7, 12]}
 
+Или для бота:
+{"service": "bot", "package": "full"}
+
 Возможные значения:
 - service: "site" или "bot"
 - site_type: "len" (лендинг), "info" (информационный), "vizit" (визитка), "portfolio" (портфолио), "shop" (интернет-магазин), "universal" (универсальный) — только если service = "site"
 - addons: массив номеров дополнительных услуг (например, [3, 7, 12]) — если их нет, то []
+- package: "contact", "contact_consult", "full" — только если service = "bot"
 
 Если клиент задаёт вопрос, не связанный с выбором, или ты не уверен в выборе, верни обычный текст (не JSON).
 """
@@ -282,13 +282,14 @@ def get_or_create_history(user_id: str) -> list:
     sessions[user_id] = sessions[user_id][-MAX_HISTORY:]
     return sessions[user_id]
 
-def calculate_total(service: str, site_type: str = None, addons: list = None) -> tuple:
+def calculate_total(service: str, site_type: str = None, addons: list = None, package: str = None) -> tuple:
     """Возвращает (сумма, текстовое описание заказа)"""
     total = 0.0
     services_text = ""
     if addons:
         # Убираем дубликаты
         addons = list(set(addons))
+    
     if service == "site" and site_type:
         total += SITE_PRICES.get(site_type, 0)
         services_text = SITE_NAMES.get(site_type, "Сайт")
@@ -300,17 +301,13 @@ def calculate_total(service: str, site_type: str = None, addons: list = None) ->
                     addon_list.append(ADDON_NAMES.get(a, str(a)))
             if addon_list:
                 services_text += " + " + ", ".join(addon_list)
-    elif service == "bot":
-        total += 12000
-        services_text = "Telegram-бот"
-        if addons:
-            addon_list = []
-            for a in addons:
-                if a in BOT_ADDONS:
-                    total += BOT_ADDONS[a]
-                    addon_list.append(BOT_ADDON_NAMES.get(a, str(a)))
-            if addon_list:
-                services_text += " + " + ", ".join(addon_list)
+                
+    elif service == "bot" and package:
+        # Берем цену из пакета, а не жестко забитую
+        total = BOT_PACKAGE_PRICES.get(package, 0)
+        services_text = BOT_PACKAGE_NAMES.get(package, "Telegram-бот")
+        # Доп. услуги для ботов больше не предлагаются, поэтому addons игнорируем
+
     return int(total), services_text
 
 # ---------- ЭНДПОИНТЫ ----------
@@ -342,24 +339,29 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
 
-    # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
-    try:
-        data = json.loads(reply)
-        if isinstance(data, dict) and "service" in data:
-            service = data.get("service")
-            site_type = data.get("site_type")
-            addons = data.get("addons", [])
-            if service in ["site", "bot"]:
-                total, services_text = calculate_total(service, site_type, addons)
-                # Формируем ответ сами, игнорируя reply
-                reply = (
-                    f"Стоимость вашего заказа: {total} ₽.\n"
-                    f"Точную сумму вам выдаст — ЮKassa.\n\n"
-                    f"Вы согласны с этим выбором?"
-                )
-    except json.JSONDecodeError:
-        # Не JSON — ничего не делаем, оставляем reply как есть
-        pass
+    # --- Извлекаем JSON из ответа нейросети (улучшенный парсинг) ---
+    json_match = re.search(r'\{.*\}', reply, re.DOTALL)
+    if json_match:
+        try:
+            data = json.loads(json_match.group())
+            if isinstance(data, dict) and "service" in data:
+                service = data.get("service")
+                site_type = data.get("site_type")
+                addons = data.get("addons", [])
+                package = data.get("package")
+                
+                if service in ["site", "bot"]:
+                    total, services_text = calculate_total(service, site_type, addons, package)
+                    
+                    # ПРИНУДИТЕЛЬНО заменяем ответ нейросети на наш, с правильной суммой
+                    reply = (
+                        f"Стоимость вашего заказа: {total} ₽.\n"
+                        f"Точную сумму вам выдаст — ЮKassa.\n\n"
+                        f"Вы согласны с этим выбором?"
+                    )
+        except json.JSONDecodeError:
+            # Не JSON — ничего не делаем, оставляем reply как есть
+            pass
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
