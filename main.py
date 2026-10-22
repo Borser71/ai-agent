@@ -332,7 +332,7 @@ async def ask_question(request: QuestionRequest):
 
     try:
         response = client.chat.completions.create(
-            model="google/gemini-2.5-flash-lite",
+            model="openai/gpt-4o-mini",
             messages=messages,
             max_tokens=1200,
             temperature=0,
