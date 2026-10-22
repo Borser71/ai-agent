@@ -18,7 +18,8 @@ logger = logging.getLogger("ai-agent")
 
 client = OpenAI(
     api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1"
+    base_url="https://openrouter.ai/api/v1",
+    max_retries=5
 )
 
 app = FastAPI(title="Borisov Store AI Agent")
