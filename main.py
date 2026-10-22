@@ -279,6 +279,7 @@ class AnswerResponse(BaseModel):
 # ---------- СЕССИИ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
 sessions = {}
 MAX_HISTORY = 10
+user_selected_site = {}
 
 def get_or_create_history(user_id: str) -> list:
     if user_id not in sessions:
@@ -326,6 +327,30 @@ async def ask_question(request: QuestionRequest):
     if not user_message:
         raise HTTPException(status_code=400, detail="Текст сообщения не может быть пустым")
 
+    # --- ЖЕЛЕЗОБЕТОННЫЙ ПАРСИНГ ЦИФР (в обход нейросети) ---
+    # Если клиент написал цифры через запятую (например, "1,3,7,9,12,14")
+    if re.match(r'^[\d\s,]+$', user_message) and len(user_message) > 1:
+        # Достаем номера услуг
+        addons = [int(x) for x in re.findall(r'\d+', user_message)]
+        
+        # Если мы знаем, какой сайт он выбрал ранее (сохранен в user_selected_site)
+        if user_id in user_selected_site:
+            site_type = user_selected_site[user_id]
+            total, services_text = calculate_total("site", site_type, addons)
+            
+            reply = (
+                f"Стоимость вашего заказа: {total} ₽.\n"
+                f"Точную сумму вам выдаст — ЮKassa.\n\n"
+                f"Вы согласны с этим выбором?"
+            )
+            
+            history = get_or_create_history(user_id)
+            history.append({"role": "user", "content": user_message})
+            history.append({"role": "assistant", "content": reply})
+            
+            return AnswerResponse(reply=reply)
+
+    # Если это не просто цифры, а обычный текст — идем к нейросети
     history = get_or_create_history(user_id)
     history.append({"role": "user", "content": user_message})
 
@@ -343,7 +368,7 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Извините, произошла техническая ошибка. Попробуйте ещё раз или свяжитесь с нами через контакты на сайте."
 
-    # --- Извлекаем JSON из ответа нейросети (улучшенный парсинг) ---
+    # --- Извлекаем JSON из ответа нейросети (если она его прислала) ---
     json_match = re.search(r'\{.*\}', reply, re.DOTALL)
     if json_match:
         try:
@@ -354,22 +379,27 @@ async def ask_question(request: QuestionRequest):
                 addons = data.get("addons", [])
                 package = data.get("package")
                 
-                if service in ["site", "bot"]:
+                if service == "site" and site_type:
+                    # Запоминаем, какой сайт выбрал клиент, чтобы потом считать допуслуги
+                    user_selected_site[user_id] = site_type
                     total, services_text = calculate_total(service, site_type, addons, package)
-                    
-                    # ПРИНУДИТЕЛЬНО заменяем ответ нейросети на наш, с правильной суммой
+                    reply = (
+                        f"Стоимость вашего заказа: {total} ₽.\n"
+                        f"Точную сумму вам выдаст — ЮKassa.\n\n"
+                        f"Вы согласны с этим выбором?"
+                    )
+                elif service == "bot" and package:
+                    total, services_text = calculate_total(service, site_type, addons, package)
                     reply = (
                         f"Стоимость вашего заказа: {total} ₽.\n"
                         f"Точную сумму вам выдаст — ЮKassa.\n\n"
                         f"Вы согласны с этим выбором?"
                     )
         except json.JSONDecodeError:
-            # Не JSON — ничего не делаем, оставляем reply как есть
             pass
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
-
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 80))
