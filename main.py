@@ -68,7 +68,7 @@ SYSTEM_PROMPT = """
 <br>1. 🌐 — Сайт
 <br>2. 🤖 — Telegram-бота
 <br>3. 🟣 — MAX-бота
-<br>4. 🧠 — AI-агента для сайта
+<br>4. 🧠 — AI-агента на сайт
 <br>Напишите номер или название услуги.»
 
 Шаг 2. Обработка ответа клиента:
@@ -139,28 +139,28 @@ SYSTEM_PROMPT = """
 - Если клиент задал вопрос — ответь текстом и снова предложи написать «да». JSON не возвращай.
 
 6. Технологии (отвечать, если клиент спросит)
-Для сайтов:
+<br>Для сайтов:
 <br>- <b>HTML5</b> — семантическая вёрстка, адаптивность, современные формы, отложенная загрузка.
 <br>- <b>CSS3</b> — современный дизайн, плавные переходы, Flexbox и Grid, адаптивность.
 <br>- <b>JavaScript</b> — интерактивность, модальные окна, валидация форм.
 <br>- <b>Мини-CRM на Google Таблицах</b> — сбор заявок, дублирование на почту.
 <br>- <b>ЮKassa</b> — безопасная оплата.
 
-Для Telegram-бота:
+<br>Для Telegram-бота:
 <br>- <b>Python 3</b> — надежный язык с поддержкой асинхронности (обслуживает тысячи клиентов).
 <br>- <b>aiogram 3.x</b> — современный фреймворк для команд, кнопок и меню.
 <br>- <b>OpenAI / OpenRouter API</b> — интеграция нейросетей (Gemini) для умного общения.
 <br>- <b>YooKassa</b> — автоматический прием платежей через карты и СБП.
 <br>- <b>Render / Amvera</b> — облачный хостинг для работы 24/7.
 
-Для MAX-бота:
+<br>Для MAX-бота:
 <br>- <b>Python 3</b> — надежный язык с асинхронностью.
 <br>- <b>maxapi</b> — библиотека для работы с API MAX (команды, кнопки, состояния).
 <br>- <b>OpenAI / OpenRouter API</b> — умный консультант 24/7.
 <br>- <b>YooKassa</b> — безопасный прием платежей.
 <br>- <b>Amvera</b> — российский хостинг.
 
-Для AI-агента на сайт:
+<br>Для AI-агента на сайт:
 <br>- <b>Python 3</b> — высокая скорость и надежность.
 <br>- <b>FastAPI</b> — современный веб-фреймворк для мгновенной обработки запросов.
 <br>- <b>OpenAI / OpenRouter API</b> — «мозг» агента для общения с клиентами.
@@ -326,16 +326,22 @@ async def ask_question(request: QuestionRequest):
         elif clean_reply.startswith("```"):
             clean_reply = clean_reply.replace("```\n", "").replace("```", "").strip()
 
-        data = json.loads(clean_reply)
-        if isinstance(data, dict) and "service" in data:
             service = data.get("service")
             site_type = data.get("site_type")
-            addons = data.get("addons", [])
             platform = data.get("platform")
             package = data.get("package")
 
+            # ===== НАЧАЛО ПРАВКИ ДЛЯ САЙТА =====
+            if service == "site":
+                # Код САМ ищет цифры в твоем сообщении, игнорируя нейросеть
+                found_numbers = re.findall(r'\d+', user_message)
+                addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
+            else:
+                addons = data.get("addons", [])
+            # ===== КОНЕЦ ПРАВКИ =====
+
             if service in ["site", "bot"]:
-                total, services_text = calculate_total(service, site_type, addons, platform, package)
+                total, services_text = calculate_total(service, site_type, addons, platform, package) 
                 if total > 0:
                     # Формируем ответ сами, игнорируя reply
                     reply = (
