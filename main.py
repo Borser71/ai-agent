@@ -310,7 +310,7 @@ async def ask_question(request: QuestionRequest):
         response = client.chat.completions.create(
             model="google/gemini-2.5-flash-lite",
             messages=messages,
-            max_tokens=1500,
+            max_tokens=1500, # Увеличил, чтобы влезали длинные списки
             temperature=0,
         )
         reply = response.choices[0].message.content
@@ -318,81 +318,37 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Секунду, уточняю информацию. Пожалуйста, отправьте сообщение ещё раз."
 
-    # --- Пытаемся распарсить JSON от нейросети ---
-    data = None
+    # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
     try:
         clean_reply = reply.strip()
         if clean_reply.startswith("```json"):
             clean_reply = clean_reply.replace("```json\n", "").replace("```", "").strip()
         elif clean_reply.startswith("```"):
             clean_reply = clean_reply.replace("```\n", "").replace("```", "").strip()
+
         data = json.loads(clean_reply)
+        if isinstance(data, dict) and "service" in data:
+            service = data.get("service")
+            site_type = data.get("site_type")
+            addons = data.get("addons", [])
+            platform = data.get("platform")
+            package = data.get("package")
+
+            if service in ["site", "bot"]:
+                total, services_text = calculate_total(service, site_type, addons, platform, package)
+                if total > 0:
+                    # Формируем ответ сами, игнорируя reply
+                    reply = (
+                        f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
+                        f"<br>Состав: {services_text}."
+                        f"<br>Точную сумму вам выдаст — ЮKassa."
+                        f"<br><br>Вы согласны с этим выбором?"
+                    )
+                else:
+                    reply = "Извините, я не совсем понял ваш выбор. Уточните, пожалуйста, что именно вы хотите заказать."
     except json.JSONDecodeError:
+        # Не JSON — ничего не делаем, оставляем reply как есть
         pass
-
-    # ================= МАГИЯ КОДА =================
-    # Мы храним выбранные услуги в сессии, чтобы код не зависел от нейросети
-    if "current_order" not in sessions:
-        sessions["current_order"] = {}
-
-    order_data = sessions["current_order"]
-
-    # 1. Если нейросеть распознала тип сайта (например, портфолио) — запоминаем
-    if data and isinstance(data, dict) and data.get("service") == "site":
-        order_data["site_type"] = data.get("site_type")
-        order_data["service"] = "site"
-
-    # 2. Ищем цифры допуслуг в сообщении пользователя
-    found_numbers = re.findall(r'\d+', user_message)
-    # Оставляем только те, что реально являются допуслугами (1-14)
-    valid_addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
-
-    # Если мы знаем, что это сайт, и клиент ввел цифры — считаем сами!
-    if order_data.get("service") == "site" and valid_addons:
-        order_data["addons"] = list(set(valid_addons))
-        
-        # СЧИТАЕМ САМИ
-        total, services_text = calculate_total(
-            service="site", 
-            site_type=order_data.get("site_type"), 
-            addons=order_data.get("addons")
-        )
-        
-        if total > 0:
-            reply = (
-                f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
-                f"<br>Состав: {services_text}."
-                f"<br>Точную сумму вам выдаст — ЮKassa."
-                f"<br><br>Вы согласны с этим выбором?"
-            )
-
-    # Если нейросеть вернула JSON для бота, считаем через стандартную логику
-    elif data and isinstance(data, dict) and data.get("service") == "bot":
-        total, services_text = calculate_total(
-            service="bot", 
-            platform=data.get("platform"), 
-            package=data.get("package")
-        )
-        if total > 0:
-            reply = (
-                f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
-                f"<br>Состав: {services_text}."
-                f"<br>Точную сумму вам выдаст — ЮKassa."
-                f"<br><br>Вы согласны с этим выбором?"
-            )
-    
-    # Если пользователь сказал "да", а мы уже знаем тип сайта и допуслуги — подтверждаем сумму
-    if user_message.lower() in ["да", "согласен", "ок"] and order_data.get("service") == "site" and order_data.get("addons"):
-         total, services_text = calculate_total(
-            service="site", 
-            site_type=order_data.get("site_type"), 
-            addons=order_data.get("addons")
-        )
-         # Оставляем текст нейросети (он должен быть про оферту), но гарантируем, что сумма не сбросится
-         if "Стоимость" not in reply:
-             reply = f"Стоимость вашего заказа: <b>{total} ₽</b>. Вы согласны? (да/нет)"
-
-    # ================= КОНЕЦ МАГИИ =================
 
     history.append({"role": "assistant", "content": reply})
     return AnswerResponse(reply=reply)
