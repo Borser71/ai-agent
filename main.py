@@ -183,7 +183,14 @@ SYSTEM_PROMPT = """
 «Меня зовут Борисов Сергей. Я имею официальный статус «Самозанятый», который вы можете проверить <a href='https://npd.nalog.ru/check-status/' target='_blank'>по ссылке на сайте ФНС</a>. Для проверки введите мой ИНН: 665200001260 и укажите дату.»
 
 8. Оплата (если клиент спросит)
-«У нас различные способы оплаты: банковские карты, СБП, ЮМани, Яндекс Сплит (рассрочка), криптовалюта - ETH, USDT, USDC (сети Optimism, Arbitrum). Более подробную информацию смотрите в оферте (пункт 3.7).»
+<b>У нас различные способы оплаты:</b>
+<br>- Банковские карты
+<br>- СБП
+<br>- ЮМани
+<br>- Яндекс Сплит (рассрочка)
+<br>- Криптовалюта (ETH, USDT, USDC — сети Optimism, Arbitrum)
+
+<br>Более подробную информацию смотрите в оферте (пункт 3.7).
 
 9. Гарантии (если клиент спросит про гарантию)
 «Да, мы предоставляем гарантийную поддержку в течение 30 дней после сдачи проекта.»
@@ -204,6 +211,7 @@ SYSTEM_PROMPT = """
 - При вопросах о налогах отвечай только данными из п. 7.
 - Если вопрос не по теме — скажи: "Я консультант компании Borisov Store. Вся подробная информация на сайте: https://borisov.store/."
 - Если возвращаешь JSON, он должен быть единственным содержимым ответа.
+- Если ты ведешь клиента по какой-то ветке (Сайт, Telegram-бот, MAX-бот, AI-агент), и он задает вопрос про технологии (например: «технологии», «стек», «на чем делаете», «какие технологии»), ты ОБЯЗАН выдать технологии ИМЕННО ЭТОЙ ветки, даже если клиент не уточнил её название. Например, если ранее он выбирал AI-агента, а сейчас спросил «технологии», выдай технологии для AI-агента.
 
 Если клиент явно выбрал услугу, верни ТОЛЬКО JSON:
 Для сайта: {"service": "site", "site_type": "vizit", "addons": [3, 7, 12]}
@@ -348,14 +356,29 @@ async def ask_question(request: QuestionRequest):
         history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
 
-       # 3. Если клиент ввел цифры допуслуг
+    # 3. Если клиент ввел цифры допуслуг
     found_numbers = re.findall(r'\d+', user_message)
     valid_addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
 
     # Если ввели цифры, и это похоже на список допуслуг (больше одной цифры)
     if valid_addons and len(valid_addons) > 1:
-        # Берем тип сайта из памяти (если он его выбирал ранее), иначе по умолчанию "len" (Лендинг)
-        site_type = state.get("data", {}).get("site_type", "len") 
+        msg_lower = user_message.lower()
+        
+        if "визитка" in msg_lower or "визит" in msg_lower:
+            site_type = "vizit"
+        elif "портфолио" in msg_lower or "портф" in msg_lower:
+            site_type = "portfolio"
+        elif "интернет-магазин" in msg_lower or "магазин" in msg_lower or "шоп" in msg_lower or "shop" in msg_lower:
+            site_type = "shop"
+        elif "информационный" in msg_lower or "инфо" in msg_lower or "блог" in msg_lower or "статьи" in msg_lower:
+            site_type = "info"
+        elif "универсальный" in msg_lower or "универсал" in msg_lower or "комбо" in msg_lower:
+            site_type = "universal"
+        elif "лендинг" in msg_lower or "landing" in msg_lower or "одностранич" in msg_lower:
+            site_type = "len"
+        else:
+            # Если не нашли слово, берем из памяти, или по умолчанию "лендинг"
+            site_type = state.get("data", {}).get("site_type", "len")  
         
         # Код САМ считает сумму
         total, services_text = calculate_total(
