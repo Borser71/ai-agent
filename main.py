@@ -215,7 +215,7 @@ SYSTEM_PROMPT = """
 - Если ты ведешь клиента по какой-то ветке (Сайт, Telegram-бот, MAX-бот, AI-агент), и он задает вопрос про технологии (например: «технологии», «стек», «на чем делаете», «какие технологии»), ты ОБЯЗАН выдать технологии ИМЕННО ЭТОЙ ветки, даже если клиент не уточнил её название.
 
 Если клиент явно выбрал услугу, верни ТОЛЬКО JSON:
-Для сайта: {"service": "site", "site_type": "vizit"}
+Для сайта: {"service": "site", "site_type": "vizit", "addons": [3, 7, 12]}
 Для TG-бота: {"service": "bot", "platform": "telegram", "package": "full"}
 Для MAX-бота: {"service": "bot", "platform": "max", "package": "contact_consult"}
 Для AI-агента: {"service": "bot", "platform": "ai_agent", "package": "full"}
@@ -344,73 +344,17 @@ async def ask_question(request: QuestionRequest):
             )
             state["step"] = "waiting_offer"
         elif user_message.lower() in ["нет", "не согласен", "не"]:
-            reply = "Хорошо, давайте пересчитаем. Напишите номера допуслуг через запятую или «нет»."
-            state["step"] = "waiting_addons" 
+            reply = "Хорошо, давайте пересчитаем. Напишите, что вы хотите заказать (тип сайта или бота и номера допуслуг)."
+            state["step"] = "start"
+            state["data"] = {}
         else:
             reply = "Пожалуйста, ответьте «да» или «нет»."
         history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
 
-    # ================= 3. ЖДЕМ ЦИФРЫ (КОД СЧИТАЕТ САМ) =================
-    if state["step"] == "waiting_addons":
-        if user_message.lower() == "нет":
-            total, services_text = calculate_total("site", state["data"]["site_type"], [])
-            reply = (
-                f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
-                f"<br>Состав: {services_text}."
-                f"<br>Точную сумму вам выдаст — ЮKassa."
-                f"<br><br>Вы согласны с этим выбором?"
-            )
-            state["step"] = "waiting_confirmation"
-        else:
-            # Ищем цифры в твоем сообщении
-            found_numbers = re.findall(r'\d+', user_message)
-            valid_addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
-            
-            if valid_addons:
-                # Берем тип сайта, который мы ЗАФИКСИРОВАЛИ ранее!
-                total, services_text = calculate_total("site", state["data"]["site_type"], valid_addons)
-                reply = (
-                    f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
-                    f"<br>Состав: {services_text}."
-                    f"<br>Точную сумму вам выдаст — ЮKassa."
-                    f"<br><br>Вы согласны с этим выбором?"
-                )
-                state["step"] = "waiting_confirmation"
-            else:
-                reply = "Я не нашел номеров услуг. Напишите номера через запятую (например, 1, 3, 7) или напишите «нет»."
-        
-        history.append({"role": "assistant", "content": reply})
-        return AnswerResponse(reply=reply)
-
-        # ================= 4. ЖЕСТКИЙ ПЕРЕХВАТ ЦИФР И ВЫЗОВ НЕЙРОСЕТИ =================
-    
-    # Проверяем, не написал ли клиент цифру типа сайта (1-6)
-    site_map = {
-        "1": "len",       # Лендинг
-        "2": "info",      # Информационный
-        "3": "vizit",     # Визитка
-        "4": "portfolio", # Портфолио
-        "5": "shop",      # Интернет-магазин
-        "6": "universal"  # Универсальный
-    }
-
-    if user_message.strip() in site_map and not state["data"].get("site_type"):
-        site_type = site_map[user_message.strip()]
-        state["data"]["site_type"] = site_type
-        site_name = SITE_NAMES.get(site_type, "Сайт")
-        
-        reply = (
-            f"<b>{site_name}</b> - отличный выбор! 🎉<br><br>"
-            "Хотите добавить дополнительные услуги?<br>"
-            "Напишите номера через запятую (например: 1, 3, 7) или напишите «нет»."
-        )
-        state["step"] = "waiting_addons"
-        history.append({"role": "assistant", "content": reply})
-        return AnswerResponse(reply=reply)
-
-    # Если это не цифра, идем в нейросеть
+    # ================= 3. ОТПРАВЛЯЕМ В НЕЙРОСЕТЬ =================
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+    
     try:
         response = client.chat.completions.create(
             model="google/gemini-2.5-flash-lite",
@@ -421,11 +365,9 @@ async def ask_question(request: QuestionRequest):
         reply = response.choices[0].message.content
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
-        
-        # Эта строчка остается, она нужна для защиты от сбоев сети
         reply = "Секунду, уточняю информацию. Пожалуйста, отправьте сообщение ещё раз."
 
-    # ================= 5. ПЕРЕХВАТ JSON =================
+    # ================= 4. ПЕРЕХВАТЫВАЕМ JSON И СЧИТАЕМ САМИ =================
     try:
         clean_reply = reply.strip()
         if clean_reply.startswith("```json"):
@@ -440,17 +382,30 @@ async def ask_question(request: QuestionRequest):
             platform = data.get("platform")
             package = data.get("package")
 
-            # Если это САЙТ - фиксируем и спрашиваем про допуслуги
+            # Если это САЙТ
             if service == "site" and site_type:
-                state["data"]["site_type"] = site_type
-                state["step"] = "waiting_addons"
-                reply = (
-                    f"Отличный выбор! Вы выбрали: <b>{SITE_NAMES.get(site_type, 'Сайт')}</b>.<br><br>"
-                    "Хотите добавить дополнительные услуги?<br>"
-                    "Напишите номера через запятую (например: 1, 3, 7) или напишите «нет»."
-                )
+                # 1. Код САМ ищет цифры в твоем сообщении
+                found_numbers = re.findall(r'\d+', user_message)
+                valid_addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
 
-            # Если это БОТ - считаем сразу
+                # 2. Код САМ считает сумму
+                total, services_text = calculate_total(
+                    service="site", 
+                    site_type=site_type, 
+                    addons=valid_addons
+                )
+                
+                if total > 0:
+                    reply = (
+                        f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
+                        f"<br>Состав: {services_text}."
+                        f"<br>Точную сумму вам выдаст — ЮKassa."
+                        f"<br><br>Вы согласны с этим выбором?"
+                    )
+                    state["data"]["addons"] = valid_addons
+                    state["step"] = "waiting_confirmation"
+
+            # Если это БОТ
             elif service == "bot" and package:
                 total, services_text = calculate_total("bot", platform=platform, package=package)
                 if total > 0:
