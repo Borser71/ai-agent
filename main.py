@@ -385,22 +385,7 @@ async def ask_question(request: QuestionRequest):
         state["step"] = "waiting_confirmation"
         state["data"]["addons"] = valid_addons
         history.append({"role": "assistant", "content": reply})
-        return AnswerResponse(reply=reply)
-
-    # 4. Если есть цифра типа сайта (1-6), но нет слова "сайт"
-    site_by_num = {"1": "len", "2": "info", "3": "vizit", "4": "portfolio", "5": "shop", "6": "universal"}
-    if user_message.strip() in site_by_num and not state["data"].get("site_type"):
-        stype = site_by_num[user_message.strip()]
-        state["data"]["site_type"] = stype
-        site_name = SITE_NAMES.get(stype, "Сайт")
-        reply = (
-            f"<b>{site_name}</b> - отличный выбор! 🎉<br><br>"
-            "Хотите добавить дополнительные услуги?<br>"
-            "Напишите номера через запятую (например: 1, 3, 7) или напишите «нет»."
-        )
-        state["step"] = "waiting_addons"
-        history.append({"role": "assistant", "content": reply})
-        return AnswerResponse(reply=reply)
+        return AnswerResponse(reply=reply)    
     
     # Если написали "нет" на допуслуги
     if state["step"] == "waiting_addons" and user_message.lower() == "нет":
