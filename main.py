@@ -318,7 +318,7 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Секунду, уточняю информацию. Пожалуйста, отправьте сообщение ещё раз."
 
-    # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
+        # --- Пытаемся распарсить JSON и сформировать правильный ответ ---
     try:
         clean_reply = reply.strip()
         if clean_reply.startswith("```json"):
@@ -330,10 +330,18 @@ async def ask_question(request: QuestionRequest):
         if isinstance(data, dict) and "service" in data:
             service = data.get("service")
             site_type = data.get("site_type")
-            addons = data.get("addons", [])
             platform = data.get("platform")
             package = data.get("package")
-
+            
+            # ===== МАГИЯ: КОД САМ ИЩЕТ ЦИФРЫ В СООБЩЕНИИ ПОЛЬЗОВАТЕЛЯ =====
+            addons = []
+            if service == "site":
+                # Ищем все цифры в последнем сообщении пользователя
+                # Например, из "1,14,7,9,11,13" код сделает список [1, 14, 7, 9, 11, 13]
+                found_numbers = re.findall(r'\d+', user_message)
+                # Превращаем в int и оставляем только те, что есть в словаре допуслуг (от 1 до 14)
+                addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
+            
             if service in ["site", "bot"]:
                 total, services_text = calculate_total(service, site_type, addons, platform, package)
                 if total > 0:
