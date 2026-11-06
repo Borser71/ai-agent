@@ -383,7 +383,33 @@ async def ask_question(request: QuestionRequest):
         history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
 
-    # ================= 4. ИДЕМ В НЕЙРОСЕТЬ =================
+        # ================= 4. ЖЕСТКИЙ ПЕРЕХВАТ ЦИФР И ВЫЗОВ НЕЙРОСЕТИ =================
+    
+    # Проверяем, не написал ли клиент цифру типа сайта (1-6)
+    site_map = {
+        "1": "len",       # Лендинг
+        "2": "info",      # Информационный
+        "3": "vizit",     # Визитка
+        "4": "portfolio", # Портфолио
+        "5": "shop",      # Интернет-магазин
+        "6": "universal"  # Универсальный
+    }
+
+    if user_message.strip() in site_map and not state["data"].get("site_type"):
+        site_type = site_map[user_message.strip()]
+        state["data"]["site_type"] = site_type
+        site_name = SITE_NAMES.get(site_type, "Сайт")
+        
+        reply = (
+            f"<b>{site_name}</b> - отличный выбор! 🎉<br><br>"
+            "Хотите добавить дополнительные услуги?<br>"
+            "Напишите номера через запятую (например: 1, 3, 7) или напишите «нет»."
+        )
+        state["step"] = "waiting_addons"
+        history.append({"role": "assistant", "content": reply})
+        return AnswerResponse(reply=reply)
+
+    # Если это не цифра, идем в нейросеть
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
     try:
         response = client.chat.completions.create(
@@ -395,6 +421,8 @@ async def ask_question(request: QuestionRequest):
         reply = response.choices[0].message.content
     except Exception as e:
         logger.error(f"Ошибка OpenRouter: {e}")
+        
+        # Эта строчка остается, она нужна для защиты от сбоев сети
         reply = "Секунду, уточняю информацию. Пожалуйста, отправьте сообщение ещё раз."
 
     # ================= 5. ПЕРЕХВАТ JSON =================
