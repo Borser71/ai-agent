@@ -313,15 +313,12 @@ async def ask_question(request: QuestionRequest):
     history = get_or_create_history(user_id)
     history.append({"role": "user", "content": user_message})
 
-    # Инициализируем состояние пользователя, если его нет
     if user_id not in user_states:
         user_states[user_id] = {"step": "start", "data": {}}
     
     state = user_states[user_id]
-    
-    # ================= ЖЕСТКАЯ ЛОГИКА (КАК В MAX-БОТЕ) =================
-    
-    # 1. Если мы ждем подтверждения оферты
+
+    # ================= 1. ЖЕСТКАЯ ОФЕРТА =================
     if state["step"] == "waiting_offer":
         if user_message.lower() in ["да", "согласен", "ок", "подтверждаю"]:
             reply = (
@@ -332,11 +329,10 @@ async def ask_question(request: QuestionRequest):
             state["step"] = "done"
         else:
             reply = "Пожалуйста, подтвердите, что вы ознакомились с офертой, написав «да»."
-        
         history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
 
-    # 2. Если мы ждем подтверждения суммы
+    # ================= 2. ЖЕСТКОЕ ПОДТВЕРЖДЕНИЕ СУММЫ =================
     if state["step"] == "waiting_confirmation":
         if user_message.lower() in ["да", "согласен", "ок"]:
             reply = (
@@ -352,57 +348,12 @@ async def ask_question(request: QuestionRequest):
             state["data"] = {}
         else:
             reply = "Пожалуйста, ответьте «да» или «нет»."
-            
         history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
 
-    # 3. Если клиент ввел цифры допуслуг
-    found_numbers = re.findall(r'\d+', user_message)
-    valid_addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
-
-    # Если ввели цифры, и это похоже на список допуслуг (больше одной цифры)
-    if valid_addons and len(valid_addons) > 1:
-        msg_lower = user_message.lower()
-        
-        if "визитка" in msg_lower or "визит" in msg_lower:
-            site_type = "vizit"
-        elif "портфолио" in msg_lower or "портф" in msg_lower:
-            site_type = "portfolio"
-        elif "интернет-магазин" in msg_lower or "магазин" in msg_lower or "шоп" in msg_lower or "shop" in msg_lower:
-            site_type = "shop"
-        elif "информационный" in msg_lower or "инфо" in msg_lower or "блог" in msg_lower or "статьи" in msg_lower:
-            site_type = "info"
-        elif "универсальный" in msg_lower or "универсал" in msg_lower or "комбо" in msg_lower:
-            site_type = "universal"
-        elif "лендинг" in msg_lower or "landing" in msg_lower or "одностранич" in msg_lower:
-            site_type = "len"
-        else:
-            # Если не нашли слово, берем из памяти, или по умолчанию "лендинг"
-            site_type = state.get("data", {}).get("site_type", "len")  
-        
-        # Код САМ считает сумму
-        total, services_text = calculate_total(
-            service="site", 
-            site_type=site_type, 
-            addons=valid_addons
-        )
-        if total > 0:
-            reply = (
-                f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
-                f"<br>Состав: {services_text}."
-                f"<br>Точную сумму вам выдаст — ЮKassa."
-                f"<br><br>Вы согласны с этим выбором?"
-            )
-            state["data"]["addons"] = valid_addons
-            state["data"]["service"] = "site"
-            state["step"] = "waiting_confirmation"
-            
-            history.append({"role": "assistant", "content": reply})
-            return AnswerResponse(reply=reply)
-
-    # ================= ЕСЛИ ЭТО НЕ ОФОРМЛЕНИЕ, ИДЕМ В НЕЙРОСЕТЬ =================
+    # ================= 3. ОТПРАВЛЯЕМ В НЕЙРОСЕТЬ =================
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
-
+    
     try:
         response = client.chat.completions.create(
             model="google/gemini-2.5-flash-lite",
@@ -415,7 +366,7 @@ async def ask_question(request: QuestionRequest):
         logger.error(f"Ошибка OpenRouter: {e}")
         reply = "Секунду, уточняю информацию. Пожалуйста, отправьте сообщение ещё раз."
 
-    # --- Пытаемся распарсить JSON от нейросети ---
+    # ================= 4. ПЕРЕХВАТЫВАЕМ JSON И СЧИТАЕМ САМИ =================
     try:
         clean_reply = reply.strip()
         if clean_reply.startswith("```json"):
@@ -430,13 +381,20 @@ async def ask_question(request: QuestionRequest):
             platform = data.get("platform")
             package = data.get("package")
 
-            # Если это сайт, запоминаем его в состояние и ждем цифры допуслуг
+            # Если это САЙТ
             if service == "site" and site_type:
-                state["data"]["service"] = "site"
-                state["data"]["site_type"] = site_type
-                # Если клиент сразу ввел цифры вместе с типом сайта
-                if valid_addons:
-                    total, services_text = calculate_total("site", site_type, valid_addons)
+                # 1. Код САМ ищет цифры в твоем сообщении
+                found_numbers = re.findall(r'\d+', user_message)
+                valid_addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
+
+                # 2. Код САМ считает сумму
+                total, services_text = calculate_total(
+                    service="site", 
+                    site_type=site_type, 
+                    addons=valid_addons
+                )
+                
+                if total > 0:
                     reply = (
                         f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
                         f"<br>Состав: {services_text}."
@@ -445,11 +403,8 @@ async def ask_question(request: QuestionRequest):
                     )
                     state["data"]["addons"] = valid_addons
                     state["step"] = "waiting_confirmation"
-                # Если цифр нет, нейросеть спросит про допуслуги, а код будет ждать цифры
-                else:
-                    state["step"] = "waiting_addons"
 
-            # Если это бот, считаем сразу
+            # Если это БОТ
             elif service == "bot" and package:
                 total, services_text = calculate_total("bot", platform=platform, package=package)
                 if total > 0:
