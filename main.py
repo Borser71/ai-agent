@@ -344,7 +344,7 @@ async def ask_question(request: QuestionRequest):
             )
             state["step"] = "waiting_offer"
         elif user_message.lower() in ["нет", "не согласен", "не"]:
-            reply = "Хорошо, давайте пересчитаем. Напишите, что вы хотите заказать (тип сайта и номера допуслуг)."
+            reply = "Хорошо, давайте пересчитаем. Напишите, что вы хотите заказать (тип сайта или бота и номера допуслуг)."
             state["step"] = "start"
             state["data"] = {}
         else:
@@ -352,56 +352,7 @@ async def ask_question(request: QuestionRequest):
         history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
 
-    # ================= 3. ЖЕСТКИЙ ПАРСИНГ САЙТОВ (БЕЗ НЕЙРОСЕТИ) =================
-    msg_lower = user_message.lower()
-    
-    # 1. Ищем тип сайта, если он написан словами
-    site_map = {
-        "лендинг": "len", "landing": "len", "одностранич": "len",
-        "инфо": "info", "блог": "info", "статьи": "info",
-        "визит": "vizit", 
-        "портф": "portfolio",
-        "магазин": "shop", "шоп": "shop", "shop": "shop",
-        "универсал": "universal"
-    }
-    for word, stype in site_map.items():
-        if word in msg_lower:
-            state["data"]["site_type"] = stype
-            break
-
-    # 2. Ищем цифры допуслуг
-    found_numbers = re.findall(r'\d+', user_message)
-    valid_addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
-
-    # 3. Если есть и тип сайта, и цифры -> СЧИТАЕМ САМИ
-    if state["data"].get("site_type") and valid_addons:
-        total, services_text = calculate_total("site", state["data"]["site_type"], valid_addons)
-        reply = (
-            f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
-            f"<br>Состав: {services_text}."
-            f"<br>Точную сумму вам выдаст — ЮKassa."
-            f"<br><br>Вы согласны с этим выбором?"
-        )
-        state["step"] = "waiting_confirmation"
-        state["data"]["addons"] = valid_addons
-        history.append({"role": "assistant", "content": reply})
-        return AnswerResponse(reply=reply)    
-    
-    # Если написали "нет" на допуслуги
-    if state["step"] == "waiting_addons" and user_message.lower() == "нет":
-        total, services_text = calculate_total("site", state["data"]["site_type"], [])
-        reply = (
-            f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
-            f"<br>Состав: {services_text}."
-            f"<br>Точную сумму вам выдаст — ЮKassa."
-            f"<br><br>Вы согласны с этим выбором?"
-        )
-        state["step"] = "waiting_confirmation"
-        history.append({"role": "assistant", "content": reply})
-        return AnswerResponse(reply=reply)
-
-    # ================= 4. ОТПРАВЛЯЕМ В НЕЙРОСЕТЬ (ТОЛЬКО ДЛЯ ВОПРОСОВ И БОТОВ) =================
-   
+    # ================= 3. ОТПРАВЛЯЕМ В НЕЙРОСЕТЬ =================
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
     
     try:
