@@ -348,15 +348,19 @@ async def ask_question(request: QuestionRequest):
         history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
 
-    # 3. Если клиент ввел цифры допуслуг (и мы знаем, что это сайт)
+       # 3. Если клиент ввел цифры допуслуг
     found_numbers = re.findall(r'\d+', user_message)
     valid_addons = [int(n) for n in found_numbers if int(n) in SITE_ADDONS]
 
-    if state.get("data", {}).get("service") == "site" and valid_addons:
+    # Если ввели цифры, и это похоже на список допуслуг (больше одной цифры)
+    if valid_addons and len(valid_addons) > 1:
+        # Берем тип сайта из памяти (если он его выбирал ранее), иначе по умолчанию "len" (Лендинг)
+        site_type = state.get("data", {}).get("site_type", "len") 
+        
         # Код САМ считает сумму
         total, services_text = calculate_total(
             service="site", 
-            site_type=state["data"].get("site_type"), 
+            site_type=site_type, 
             addons=valid_addons
         )
         if total > 0:
@@ -367,6 +371,7 @@ async def ask_question(request: QuestionRequest):
                 f"<br><br>Вы согласны с этим выбором?"
             )
             state["data"]["addons"] = valid_addons
+            state["data"]["service"] = "site"
             state["step"] = "waiting_confirmation"
             
             history.append({"role": "assistant", "content": reply})
