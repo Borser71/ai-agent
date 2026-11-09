@@ -167,7 +167,7 @@ SYSTEM_PROMPT = """
 <br>- <b>OpenAI / OpenRouter API</b> — «мозг» агента для общения с клиентами.
 <br>- <b>Amvera / Render</b> — облачный хостинг 24/7.
 
-6.1. Порядок работы
+6.1. Порядок работы (в эту строку не ставь никакую эмодзи)
 Если клиент спрашивает про порядок работы или с чего начать (перед каждым пунктом ставь <br>):
 <br>💼 Выбор тарифа или индивидуальный заказ.
 <br>📝 Обсуждение ТЗ.
@@ -359,7 +359,7 @@ async def ask_question(request: QuestionRequest):
     
     try:
         response = client.chat.completions.create(
-            model="google/gemini-2.5-flash",
+            model="google/gemini-2.5-flash-lite",
             messages=messages,
             max_tokens=1500,
             temperature=0,
