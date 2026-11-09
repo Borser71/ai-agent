@@ -359,7 +359,7 @@ async def ask_question(request: QuestionRequest):
     
     try:
         response = client.chat.completions.create(
-            model="google/gemini-2.5-flash-lite",
+            model="google/gemini-2.5-flash",
             messages=messages,
             max_tokens=1500,
             temperature=0,
