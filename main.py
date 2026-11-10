@@ -132,7 +132,7 @@ SYSTEM_PROMPT = """
 5. Ветка «AI-агент на сайт»
 Если клиент выбрал AI-агента — ответь текстом (НЕ JSON):
 "AI-агент — это умный консультант 24/7 на вашем сайте.
-Один пакет. Стоимость 16 000 ₽.
+Один пакет. Стоимость 28 000 ₽.
 Если хотите оформить — напишите «да»."
 Дождись ответа.
 - Если клиент написал «да» — верни ТОЛЬКО JSON, без пояснений: {"service": "bot", "platform": "ai_agent", "package": "full"}
@@ -286,7 +286,7 @@ def calculate_total(service: str, site_type: str = None, addons: list = None, pl
             }
             fallback_name = "MAX-бот"
         elif platform == "ai_agent":
-            package_prices = {"full": 16000}
+            package_prices = {"full": 28000}
             package_names = {"full": "AI-агент на сайт (консультант 24/7)"}
             fallback_name = "AI-агент на сайт"
         else:  # Telegram-бот
