@@ -437,6 +437,31 @@ async def ask_question(request: QuestionRequest):
                     )
                     state["data"] = {"service": "bot", "total": total}
                     state["step"] = "waiting_confirmation"
+
+            # ===== ВОТ СЮДА ДОБАВЛЯЕМ ТЕХПОДДЕРЖКУ =====
+            # Если это ТЕХПОДДЕРЖКА
+            elif service == "support":
+                if package == "one_time":
+                    total = 2000
+                    services_text = "Техподдержка одноразовая"
+                elif package == "constant":
+                    total = 5000
+                    services_text = "Техподдержка постоянная (1 месяц)"
+                else:
+                    total = 0
+                    services_text = ""
+
+                if total > 0:
+                    reply = (
+                        f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
+                        f"<br>Состав: {services_text}."
+                        f"<br>Точную сумму вам выдаст — ЮKassa."
+                        f"<br><br>Вы согласны с этим выбором?"
+                    )
+                    state["data"] = {"service": "support", "total": total}
+                    state["step"] = "waiting_confirmation"
+            # ===== КОНЕЦ БЛОКА ТЕХПОДДЕРЖКИ =====
+
     except json.JSONDecodeError:
         pass
 
