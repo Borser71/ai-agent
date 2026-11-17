@@ -338,6 +338,16 @@ async def ask_question(request: QuestionRequest):
         user_states[user_id] = {"step": "start", "data": {}}
     
     state = user_states[user_id]
+    
+    # ===== ВСТАВЛЯЕШЬ СЮДА СВОЙ БЛОК ПРО ТЕХПОДДЕРЖКУ =====
+    if user_message.strip() == "5" or user_message.lower() in ["техподдержка", "поддержка"]:
+        # ... код ...
+        return AnswerResponse(reply=reply)
+
+    if state.get("step") == "waiting_support_choice":
+        # ... код ...
+        return AnswerResponse(reply=reply)
+    # ===== КОНЕЦ ВСТАВКИ =====
 
     # ================= 1. ЖЕСТКАЯ ОФЕРТА =================
     if state["step"] == "waiting_offer":
@@ -436,31 +446,7 @@ async def ask_question(request: QuestionRequest):
                         f"<br><br>Вы согласны с этим выбором?"
                     )
                     state["data"] = {"service": "bot", "total": total}
-                    state["step"] = "waiting_confirmation"
-
-            # ===== ВОТ СЮДА ДОБАВЛЯЕМ ТЕХПОДДЕРЖКУ =====
-            # Если это ТЕХПОДДЕРЖКА
-            elif service == "support":
-                if package == "one_time":
-                    total = 2000
-                    services_text = "Техподдержка одноразовая"
-                elif package == "constant":
-                    total = 5000
-                    services_text = "Техподдержка постоянная (1 месяц)"
-                else:
-                    total = 0
-                    services_text = ""
-
-                if total > 0:
-                    reply = (
-                        f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
-                        f"<br>Состав: {services_text}."
-                        f"<br>Точную сумму вам выдаст — ЮKassa."
-                        f"<br><br>Вы согласны с этим выбором?"
-                    )
-                    state["data"] = {"service": "support", "total": total}
-                    state["step"] = "waiting_confirmation"
-            # ===== КОНЕЦ БЛОКА ТЕХПОДДЕРЖКИ =====
+                    state["step"] = "waiting_confirmation"           
 
     except json.JSONDecodeError:
         pass
