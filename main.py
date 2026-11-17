@@ -339,15 +339,42 @@ async def ask_question(request: QuestionRequest):
     
     state = user_states[user_id]
     
-    # ===== ВСТАВЛЯЕШЬ СЮДА СВОЙ БЛОК ПРО ТЕХПОДДЕРЖКУ =====
+   # ===== НАЧАЛО БЛОКА ТЕХПОДДЕРЖКИ =====
     if user_message.strip() == "5" or user_message.lower() in ["техподдержка", "поддержка"]:
-        # ... код ...
+        reply = (
+            "У нас есть два варианта технической поддержки после окончания гарантийного периода (30 дней):<br>"
+            "1) <b>Техподдержка одноразовая</b> — 2 000 ₽ (решение одной конкретной проблемы).<br>"
+            "2) <b>Техподдержка постоянная</b> — 5 000 ₽/мес (мониторинг, обновления, исправление до 5 небольших ошибок в месяц).<br>"
+            "Более подробно условия описаны в оферте (пункт 7).<br><br>"
+            "Напишите 1 или 2."
+        )
+        state["step"] = "waiting_support_choice"
+        history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
 
     if state.get("step") == "waiting_support_choice":
-        # ... код ...
+        if user_message.strip() == "1":
+            total = 2000
+            services_text = "Техподдержка одноразовая"
+        elif user_message.strip() == "2":
+            total = 5000
+            services_text = "Техподдержка постоянная (1 месяц)"
+        else:
+            reply = "Пожалуйста, выберите 1 или 2."
+            history.append({"role": "assistant", "content": reply})
+            return AnswerResponse(reply=reply)
+
+        reply = (
+            f"<br>Стоимость вашего заказа: <b>{total} ₽</b>."
+            f"<br>Состав: {services_text}."
+            f"<br>Точную сумму вам выдаст — ЮKassa."
+            f"<br><br>Вы согласны с этим выбором?"
+        )
+        state["data"] = {"service": "support", "total": total}
+        state["step"] = "waiting_confirmation"
+        history.append({"role": "assistant", "content": reply})
         return AnswerResponse(reply=reply)
-    # ===== КОНЕЦ ВСТАВКИ =====
+    # ===== КОНЕЦ БЛОКА ТЕХПОДДЕРЖКИ =====
 
     # ================= 1. ЖЕСТКАЯ ОФЕРТА =================
     if state["step"] == "waiting_offer":
